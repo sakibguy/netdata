@@ -82,23 +82,67 @@
 
 #define CONFIG_FILENAME "netdata.conf"
 
-#define CONFIG_SECTION_GLOBAL   "global"
-#define CONFIG_SECTION_WEB      "web"
-#define CONFIG_SECTION_STATSD   "statsd"
-#define CONFIG_SECTION_PLUGINS  "plugins"
-#define CONFIG_SECTION_CLOUD    "cloud"
-#define CONFIG_SECTION_REGISTRY "registry"
-#define CONFIG_SECTION_HEALTH   "health"
-#define CONFIG_SECTION_BACKEND  "backend"
-#define CONFIG_SECTION_STREAM   "stream"
+#define CONFIG_SECTION_GLOBAL     "global"
+#define CONFIG_SECTION_WEB        "web"
+#define CONFIG_SECTION_STATSD     "statsd"
+#define CONFIG_SECTION_PLUGINS    "plugins"
+#define CONFIG_SECTION_CLOUD      "cloud"
+#define CONFIG_SECTION_REGISTRY   "registry"
+#define CONFIG_SECTION_HEALTH     "health"
+#define CONFIG_SECTION_BACKEND    "backend"
+#define CONFIG_SECTION_STREAM     "stream"
+#define CONFIG_SECTION_EXPORTING  "exporting:global"
+#define CONFIG_SECTION_PROMETHEUS "prometheus:exporter"
+#define CONFIG_SECTION_HOST_LABEL "host labels"
+#define EXPORTING_CONF            "exporting.conf"
 
 // these are used to limit the configuration names and values lengths
 // they are not enforced by config.c functions (they will strdup() all strings, no matter of their length)
 #define CONFIG_MAX_NAME 1024
 #define CONFIG_MAX_VALUE 2048
 
+// ----------------------------------------------------------------------------
+// Config definitions
+#define CONFIG_FILE_LINE_MAX ((CONFIG_MAX_NAME + CONFIG_MAX_VALUE + 1024) * 2)
+
+#define CONFIG_VALUE_LOADED  0x01 // has been loaded from the config
+#define CONFIG_VALUE_USED    0x02 // has been accessed from the program
+#define CONFIG_VALUE_CHANGED 0x04 // has been changed from the loaded value or the internal default value
+#define CONFIG_VALUE_CHECKED 0x08 // has been checked if the value is different from the default
+
+struct config_option {
+    avl_t avl_node;         // the index entry of this entry - this has to be first!
+
+    uint8_t flags;
+    uint32_t hash;          // a simple hash to speed up searching
+                            // we first compare hashes, and only if the hashes are equal we do string comparisons
+
+    char *name;
+    char *value;
+
+    struct config_option *next; // config->mutex protects just this
+};
+
+struct section {
+    avl_t avl_node;         // the index entry of this section - this has to be first!
+
+    uint32_t hash;          // a simple hash to speed up searching
+                            // we first compare hashes, and only if the hashes are equal we do string comparisons
+
+    char *name;
+
+    struct section *next;    // gloabl config_mutex protects just this
+
+    struct config_option *values;
+    avl_tree_lock values_index;
+
+    netdata_mutex_t mutex;  // this locks only the writers, to ensure atomic updates
+                            // readers are protected using the rwlock in avl_tree_lock
+};
+
 struct config {
-    struct section *sections;
+    struct section *first_section;
+    struct section *last_section; // optimize inserting at the end
     netdata_mutex_t mutex;
     avl_tree_lock index;
 };
@@ -112,13 +156,18 @@ struct config {
 #define CONFIG_BOOLEAN_AUTO 2       // enabled if it has useful info when enabled
 #endif
 
-extern int appconfig_load(struct config *root, char *filename, int overwrite_used);
+extern int appconfig_load(struct config *root, char *filename, int overwrite_used, const char *section_name);
+extern void config_section_wrlock(struct section *co);
+extern void config_section_unlock(struct section *co);
 
+extern char *appconfig_get_by_section(struct section *co, const char *name, const char *default_value);
 extern char *appconfig_get(struct config *root, const char *section, const char *name, const char *default_value);
 extern long long appconfig_get_number(struct config *root, const char *section, const char *name, long long value);
 extern LONG_DOUBLE appconfig_get_float(struct config *root, const char *section, const char *name, LONG_DOUBLE value);
+extern int appconfig_get_boolean_by_section(struct section *co, const char *name, int value);
 extern int appconfig_get_boolean(struct config *root, const char *section, const char *name, int value);
 extern int appconfig_get_boolean_ondemand(struct config *root, const char *section, const char *name, int value);
+extern int appconfig_get_duration(struct config *root, const char *section, const char *name, const char *value);
 
 extern const char *appconfig_set(struct config *root, const char *section, const char *name, const char *value);
 extern const char *appconfig_set_default(struct config *root, const char *section, const char *name, const char *value);
@@ -132,5 +181,29 @@ extern int appconfig_move(struct config *root, const char *section_old, const ch
 extern void appconfig_generate(struct config *root, BUFFER *wb, int only_changed);
 
 extern int appconfig_section_compare(void *a, void *b);
+
+extern void appconfig_section_destroy_non_loaded(struct config *root, const char *section);
+
+extern int config_parse_duration(const char* string, int* result);
+
+extern struct section *appconfig_get_section(struct config *root, const char *name);
+
+extern void appconfig_wrlock(struct config *root);
+extern void appconfig_unlock(struct config *root);
+
+struct connector_instance {
+    char instance_name[CONFIG_MAX_NAME + 1];
+    char connector_name[CONFIG_MAX_NAME + 1];
+};
+
+typedef struct _connector_instance {
+    struct section *connector;        // actual connector
+    struct section *instance;         // This instance
+    char instance_name[CONFIG_MAX_NAME + 1];
+    char connector_name[CONFIG_MAX_NAME + 1];
+    struct _connector_instance *next; // Next instance
+} _CONNECTOR_INSTANCE;
+
+extern _CONNECTOR_INSTANCE *add_connector_instance(struct section *connector, struct section *instance);
 
 #endif /* NETDATA_CONFIG_H */

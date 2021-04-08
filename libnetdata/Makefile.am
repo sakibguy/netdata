@@ -10,7 +10,10 @@ SUBDIRS = \
     clocks \
     config \
     dictionary \
+    ebpf \
     eval \
+    json \
+    health \
     locks \
     log \
     popen \
@@ -21,8 +24,9 @@ SUBDIRS = \
     storage_number \
     threads \
     url \
+    tests \
     $(NULL)
 
 dist_noinst_DATA = \
-	README.md \
-	$(NULL)
+    README.md \
+    $(NULL)

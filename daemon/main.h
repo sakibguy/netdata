@@ -19,7 +19,7 @@ struct option_def {
     const char val;
     /** The name of the long option. */
     const char *description;
-    /** Short descripton what the option does */
+    /** Short description what the option does */
     /** Name of the argument displayed in SYNOPSIS */
     const char *arg_name;
     /** Default value if not set */
@@ -41,7 +41,7 @@ struct netdata_static_thread {
 };
 
 extern void cancel_main_threads(void);
-extern int killpid(pid_t pid, int signal);
+extern int killpid(pid_t pid);
 extern void netdata_cleanup_and_exit(int ret) NORETURN;
 extern void send_statistics(const char *action, const char *action_result, const char *action_data);
 

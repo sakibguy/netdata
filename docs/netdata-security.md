@@ -1,25 +1,30 @@
+<!--
+title: "Security design"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/docs/netdata-security.md
+-->
+
 # Security design
 
 We have given special attention to all aspects of Netdata, ensuring that everything throughout its operation is as secure as possible. Netdata has been designed with security in mind.
 
 **Table of Contents**
 
-1. [Your data are safe with Netdata](#your-data-are-safe-with-netdata)
-2. [Your systems are safe with Netdata](#your-systems-are-safe-with-netdata)
-3. [Netdata is read-only](#netdata-is-read-only)
-4. [Netdata viewers authentication](#netdata-viewers-authentication)
-	- [Why Netdata should be protected](#why-netdata-should-be-protected)
-	- [Protect Netdata from the internet](#protect-netdata-from-the-internet)
-		- [Expose Netdata only in a private LAN](#expose-netdata-only-in-a-private-lan)
-		- [Use an authenticating web server in proxy mode](#use-an-authenticating-web-server-in-proxy-mode)
-		- [Other methods](#other-methods)
-5. [Registry or how to not send any information to a third party server](#registry-or-how-to-not-send-any-information-to-a-third-party-server)
+1.  [Your data are safe with Netdata](#your-data-are-safe-with-netdata)
+2.  [Your systems are safe with Netdata](#your-systems-are-safe-with-netdata)
+3.  [Netdata is read-only](#netdata-is-read-only)
+4.  [Netdata viewers authentication](#netdata-viewers-authentication)
+    -   [Why Netdata should be protected](#why-netdata-should-be-protected)
+    -   [Protect Netdata from the internet](#protect-netdata-from-the-internet)
+        		\- [Expose Netdata only in a private LAN](#expose-netdata-only-in-a-private-lan)
+        		\- [Use an authenticating web server in proxy mode](#use-an-authenticating-web-server-in-proxy-mode)
+        		\- [Other methods](#other-methods)
+5.  [Registry or how to not send any information to a third party server](#registry-or-how-to-not-send-any-information-to-a-third-party-server)
 
 ## Your data are safe with Netdata
 
 Netdata collects raw data from many sources. For each source, Netdata uses a plugin that connects to the source (or reads the relative files produced by the source), receives raw data and processes them to calculate the metrics shown on Netdata dashboards.
 
-Even if Netdata plugins connect to your database server, or read your application log file to collect raw data, the product of this data collection process is always a number of **chart metadata and metric values** (summarized data for dashboard visualization). All Netdata plugins (internal to the Netdata daemon, and external ones written in any computer language), convert raw data collected into metrics, and only these metrics are stored in Netdata databases, sent to upstream Netdata servers, or archived to backend time-series databases.
+Even if Netdata plugins connect to your database server, or read your application log file to collect raw data, the product of this data collection process is always a number of **chart metadata and metric values** (summarized data for dashboard visualization). All Netdata plugins (internal to the Netdata daemon, and external ones written in any computer language), convert raw data collected into metrics, and only these metrics are stored in Netdata databases, sent to upstream Netdata servers, or archived to external time-series databases.
 
 > The **raw data** collected by Netdata, do not leave the host they are collected. **The only data Netdata exposes are chart metadata and metric values.**
 
@@ -33,7 +38,10 @@ There are a few cases however that raw source data are only exposed to processes
 
 So, Netdata **plugins**, even those running with escalated capabilities or privileges, perform a **hard coded data collection job**. They do not accept commands from Netdata. The communication is strictly **unidirectional**: from the plugin towards the Netdata daemon. The original application data collected by each plugin do not leave the process they are collected, are not saved and are not transferred to the Netdata daemon. The communication from the plugins to the Netdata daemon includes only chart metadata and processed metric values.
 
-Netdata slaves streaming metrics to upstream Netdata servers, use exactly the same protocol local plugins use. The raw data collected by the plugins of slave Netdata servers are **never leaving the host they are collected**. The only data appearing on the wire are chart metadata and metric values. This communication is also **unidirectional**: slave Netdata servers never accept commands from master Netdata servers.
+Child nodes use the same protocol when streaming metrics to their parent nodes. The raw data collected by the plugins of
+child Netdata servers are **never leaving the host they are collected**. The only data appearing on the wire are chart
+metadata and metric values. This communication is also **unidirectional**: child nodes never accept commands from
+parent Netdata servers.
 
 ## Netdata is read-only
 
@@ -74,7 +82,7 @@ You can bind Netdata to multiple IPs and ports. If you use hostnames, Netdata wi
 
 For cloud based installations, if your cloud provider does not provide such a private LAN (or if you use multiple providers), you can create a virtual management and administration LAN with tools like `tincd` or `gvpe`. These tools create a mesh VPN allowing all servers to communicate securely and privately. Your administration stations join this mesh VPN to get access to management and administration tasks on all your cloud servers.
 
-For `gvpe` we have developed a [simple provisioning tool](https://github.com/netdata/netdata-demo-site/tree/master/gvpe) you may find handy (it includes statically compiled `gvpe` binaries for Linux and FreeBSD, and also a script to compile `gvpe` on your Mac). We use this to create a management and administration LAN for all Netdata demo sites (spread all over the internet using multiple hosting providers).
+For `gvpe` we have developed a [simple provisioning tool](https://github.com/netdata/netdata-demo-site/tree/master/gvpe) you may find handy (it includes statically compiled `gvpe` binaries for Linux and FreeBSD, and also a script to compile `gvpe` on your macOS system). We use this to create a management and administration LAN for all Netdata demo sites (spread all over the internet using multiple hosting providers).
 
 ---
 
@@ -86,10 +94,44 @@ In Netdata v1.9+ there is also access list support, like this:
 	allow connections from = localhost 10.* 192.168.*
 ```
 
+#### Fine-grained access control
+
+The access list support allows filtering of all incoming connections, by specific IP addresses, ranges
+or validated DNS lookups. Only connections that match an entry on the list will be allowed:
+
+```
+[web]
+	allow connections from = localhost 192.168.* 1.2.3.4 homeip.net
+```
+
+Connections from the IP addresses are allowed if the connection IP matches one of the patterns given.
+The alias localhost is always checked against 127.0.0.1, any other symbolic names need to resolve in
+both directions using DNS. In the above example the IP address of `homeip.net` must reverse DNS resolve
+to the incoming IP address and a DNS lookup on `homeip.net` must return the incoming IP address as
+one of the resolved addresses.
+
+More specific control of what each incoming connection can do can be specified through the access control
+list settings:
+
+```
+[web]
+	allow connections from = 160.1.*
+	allow badges from = 160.1.1.2
+	allow streaming from = 160.1.2.*
+	allow management from = control.subnet.ip
+	allow netdata.conf from = updates.subnet.ip
+	allow dashboard from = frontend.subnet.ip
+```
+
+In this example only connections from `160.1.x.x` are allowed, only the specific IP address `160.1.1.2`
+can access badges, only IP addresses in the smaller range `160.1.2.x` can stream data. The three
+hostnames shown can access specific features, this assumes that DNS is setup to resolve these names
+to IP addresses within the `160.1.x.x` range and that reverse DNS is setup for these hosts.
+
 
 #### Use an authenticating web server in proxy mode
 
-Use one web server to provide authentication in front of **all your Netdata servers**. So, you will be accessing all your Netdata with URLs like `http://{HOST}/netdata/{NETDATA_HOSTNAME}/` and authentication will be shared among all of them (you will sign-in once for all your servers). Instructions are provided on how to set the proxy configuration to have Netdata run behind [nginx](Running-behind-nginx.md#netdata-via-nginx), [Apache](Running-behind-apache.md), [lighthttpd](Running-behind-lighttpd.md#netdata-via-lighttpd-v14x) and [Caddy](Running-behind-caddy.md#netdata-via-caddy).
+Use one web server to provide authentication in front of **all your Netdata servers**. So, you will be accessing all your Netdata with URLs like `http://{HOST}/netdata/{NETDATA_HOSTNAME}/` and authentication will be shared among all of them (you will sign-in once for all your servers). Instructions are provided on how to set the proxy configuration to have Netdata run behind [nginx](Running-behind-nginx.md), [Apache](Running-behind-apache.md), [lighttpd](Running-behind-lighttpd.md) and [Caddy](Running-behind-caddy.md).
 
 To use this method, you should firewall protect all your Netdata servers, so that only the web server IP will allowed to directly access Netdata. To do this, run this on each of your servers (or use your firewall manager):
 
@@ -97,7 +139,8 @@ To use this method, you should firewall protect all your Netdata servers, so tha
 PROXY_IP="1.2.3.4"
 iptables -t filter -I INPUT -p tcp --dport 19999 \! -s ${PROXY_IP} -m conntrack --ctstate NEW -j DROP
 ```
-_commands to allow direct access to Netdata from a web server proxy_
+
+*commands to allow direct access to Netdata from a web server proxy*
 
 The above will prevent anyone except your web server to access a Netdata dashboard running on the host.
 
@@ -132,9 +175,10 @@ iptables -t filter -A netdata -j DROP
 iptables -t filter -D INPUT -p tcp --dport ${NETDATA_PORT} -m conntrack --ctstate NEW -j netdata 2>/dev/null
 
 # add the input chain hook (again)
-# to send all new netdata connections to our filtering chain
+# to send all new Netdata connections to our filtering chain
 iptables -t filter -I INPUT -p tcp --dport ${NETDATA_PORT} -m conntrack --ctstate NEW -j netdata
 ```
+
 _script to allow access to Netdata only from a number of hosts_
 
 You can run the above any number of times. Each time it runs it refreshes the list of allowed hosts.
@@ -143,41 +187,43 @@ You can run the above any number of times. Each time it runs it refreshes the li
 
 Of course, there are many more methods you could use to protect Netdata:
 
-- bind Netdata to localhost and use `ssh -L 19998:127.0.0.1:19999 remote.netdata.ip` to forward connections of local port 19998 to remote port 19999. This way you can ssh to a Netdata server and then use `http://127.0.0.1:19998/` on your computer to access the remote Netdata dashboard.
+-   bind Netdata to localhost and use `ssh -L 19998:127.0.0.1:19999 remote.netdata.ip` to forward connections of local port 19998 to remote port 19999. This way you can ssh to a Netdata server and then use `http://127.0.0.1:19998/` on your computer to access the remote Netdata dashboard.
 
-- If you are always under a static IP, you can use the script given above to allow direct access to your Netdata servers without authentication, from all your static IPs.
+-   If you are always under a static IP, you can use the script given above to allow direct access to your Netdata servers without authentication, from all your static IPs.
 
-- install all your Netdata in **headless data collector** mode, forwarding all metrics in real-time to a master Netdata server, which will be protected with authentication using an nginx server running locally at the master Netdata server. This requires more resources (you will need a bigger master Netdata server), but does not require any firewall changes, since all the slave Netdata servers will not be listening for incoming connections.
+-   install all your Netdata in **headless data collector** mode, forwarding all metrics in real-time to a parent
+    Netdata server, which will be protected with authentication using an nginx server running locally at the parent
+    Netdata server. This requires more resources (you will need a bigger parent Netdata server), but does not require
+    any firewall changes, since all the child Netdata servers will not be listening for incoming connections.
 
 ## Anonymous Statistics
 
 ### Registry or how to not send any information to a third party server
 
-The default configuration uses a public registry under registry.my-netdata.io (more information about the registry here: [mynetdata-menu-item](../registry/) ). Please be aware that if you use that public registry, you submit the following information to a third party server: 
-- The url where you open the web-ui in the browser (via http request referer)
-- The hostnames of the Netdata servers
+The default configuration uses a public registry under registry.my-netdata.io (more information about the registry here: [mynetdata-menu-item](/registry/README.md) ). Please be aware that if you use that public registry, you submit the following information to a third party server: 
 
-If sending this information to the central Netdata registry violates your security policies, you can configure Netdat to [run your own registry](../registry/#run-your-own-registry).
+-   The url where you open the web-ui in the browser (via http request referrer)
+-   The hostnames of the Netdata servers
 
-### Opt out of anonymous statistics
+If sending this information to the central Netdata registry violates your security policies, you can configure Netdat to [run your own registry](/registry/README.md#run-your-own-registry).
 
-Starting with v1.12 Netdata also collects [anonymous statistics](anonymous-statistics.md) on certain events for: 
+### Opt-out of anonymous statistics
 
-1. **Quality assurance**, to help us understand if netdata behaves as expected and help us identify repeating issues for certain distributions or environments.
+Starting with v1.12, Netdata collects anonymous usage information by default and sends it to Google Analytics. Read
+about the information collected, and learn how to-opt, on our [anonymous statistics](anonymous-statistics.md) page.
 
-2. **Usage statistics**, to help us focus on the parts of Netdata that are used the most, or help us identify the extent our development decisions influence the community.
-
-To opt-out from sending anonymous statistics, you can create a file called `.opt-out-from-anonymous-statistics` under the user configuration directory (usually `/etc/netdata`). 
+The usage statistics are _vital_ for us, as we use them to discover bugs and prioritize new features. We thank you for
+_actively_ contributing to Netdata's future.
 
 ## Netdata directories
 
-path|owner|permissions| netdata |comments|
-:---|:----|:----------|:--------|:-------|
-`/etc/netdata`|user&nbsp;`root`<br/>group&nbsp;`netdata`|dirs `0755`<br/>files `0640`|reads|**netdata config files**<br/>may contain sensitive information, so group `netdata` is allowed to read them.
-`/usr/libexec/netdata`|user&nbsp;`root`<br/>group&nbsp;`root`|executable by anyone<br/>dirs `0755`<br/>files `0644` or `0755`|executes|**netdata plugins**<br/>permissions depend on the file - not all of them should have the executable flag.<br/>there are a few plugins that run with escalated privileges (Linux capabilities or `setuid`) - these plugins should be executable only by group `netdata`.
-`/usr/share/netdata`|user&nbsp;`root`<br/>group&nbsp;`netdata`|readable by anyone<br/>dirs `0755`<br/>files `0644`|reads and sends over the network|**Netdata web static files**<br/>these files are sent over the network to anyone that has access to the netdata web server. Netdata checks the ownership of these files (using settings at the `[web]` section of `netdata.conf`) and refuses to serve them if they are not properly owned. Symbolic links are not supported. Netdata also refuses to serve URLs with `..` in their name.
-`/var/cache/netdata`|user&nbsp;`netdata`<br/>group&nbsp;`netdata`|dirs `0750`<br/>files `0660`|reads, writes, creates, deletes|**Netdata ephemeral database files**<br/>Netdata stores its ephemeral real-time database here.
-`/var/lib/netdata`|user&nbsp;`netdata`<br/>group&nbsp;`netdata`|dirs `0750`<br/>files `0660`|reads, writes, creates, deletes|**Netdata permanent database files**<br/>Netdata stores here the registry data, health alarm log db, etc.
-`/var/log/netdata`|user&nbsp;`netdata`<br/>group&nbsp;`root`|dirs `0755`<br/>files `0644`|writes, creates|**Netdata log files**<br/>all the Netdata applications, logs their errors or other informational messages to files in this directory. These files should be log rotated.
+| path|owner|permissions|Netdata|comments|
+|:---|:----|:----------|:------|:-------|
+| `/etc/netdata`|user `root`<br/>group `netdata`|dirs `0755`<br/>files `0640`|reads|**Netdata config files**<br/>may contain sensitive information, so group `netdata` is allowed to read them.|
+| `/usr/libexec/netdata`|user `root`<br/>group `root`|executable by anyone<br/>dirs `0755`<br/>files `0644` or `0755`|executes|**Netdata plugins**<br/>permissions depend on the file - not all of them should have the executable flag.<br/>there are a few plugins that run with escalated privileges (Linux capabilities or `setuid`) - these plugins should be executable only by group `netdata`.|
+| `/usr/share/netdata`|user `root`<br/>group `netdata`|readable by anyone<br/>dirs `0755`<br/>files `0644`|reads and sends over the network|**Netdata web static files**<br/>these files are sent over the network to anyone that has access to the Netdata web server. Netdata checks the ownership of these files (using settings at the `[web]` section of `netdata.conf`) and refuses to serve them if they are not properly owned. Symbolic links are not supported. Netdata also refuses to serve URLs with `..` in their name.|
+| `/var/cache/netdata`|user `netdata`<br/>group `netdata`|dirs `0750`<br/>files `0660`|reads, writes, creates, deletes|**Netdata ephemeral database files**<br/>Netdata stores its ephemeral real-time database here.|
+| `/var/lib/netdata`|user `netdata`<br/>group `netdata`|dirs `0750`<br/>files `0660`|reads, writes, creates, deletes|**Netdata permanent database files**<br/>Netdata stores here the registry data, health alarm log db, etc.|
+| `/var/log/netdata`|user `netdata`<br/>group `root`|dirs `0755`<br/>files `0644`|writes, creates|**Netdata log files**<br/>all the Netdata applications, logs their errors or other informational messages to files in this directory. These files should be log rotated.|
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fdocs%2Fnetdata-security&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fdocs%2Fnetdata-security&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

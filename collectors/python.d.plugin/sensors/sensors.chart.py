@@ -3,10 +3,8 @@
 # Author: Pawel Krupa (paulfantom)
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from third_party import lm_sensors as sensors
-
 from bases.FrameworkServices.SimpleService import SimpleService
-
+from third_party import lm_sensors as sensors
 
 ORDER = [
     'temperature',
@@ -92,7 +90,7 @@ class Service(SimpleService):
         SimpleService.__init__(self, configuration=configuration, name=name)
         self.order = list()
         self.definitions = dict()
-        self.chips = list()
+        self.chips = configuration.get('chips')
 
     def get_data(self):
         data = dict()
@@ -162,4 +160,4 @@ class Service(SimpleService):
 
         self.create_definitions()
 
-        return True
+        return bool(self.get_data())

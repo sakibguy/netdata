@@ -18,8 +18,12 @@ typedef struct {
 
 static __thread NETDATA_THREAD *netdata_thread = NULL;
 
+inline int netdata_thread_tag_exists(void) {
+    return (netdata_thread && netdata_thread->tag && *netdata_thread->tag);
+}
+
 const char *netdata_thread_tag(void) {
-    return ((netdata_thread && netdata_thread->tag && *netdata_thread->tag)?netdata_thread->tag:"MAIN");
+    return (netdata_thread_tag_exists() ? netdata_thread->tag : "MAIN");
 }
 
 // ----------------------------------------------------------------------------
@@ -109,6 +113,58 @@ static void thread_cleanup(void *ptr) {
     netdata_thread = NULL;
 }
 
+static void thread_set_name_np(NETDATA_THREAD *nt) {
+
+    if (nt->tag) {
+        int ret = 0;
+
+        char threadname[NETDATA_THREAD_NAME_MAX+1];
+        strncpyz(threadname, nt->tag, NETDATA_THREAD_NAME_MAX);
+
+#if defined(__FreeBSD__)
+        pthread_set_name_np(pthread_self(), threadname);
+#elif defined(__APPLE__)
+        ret = pthread_setname_np(threadname);
+#else
+        ret = pthread_setname_np(pthread_self(), threadname);
+#endif
+
+        if (ret != 0)
+            error("cannot set pthread name of %d to %s. ErrCode: %d", gettid(), threadname, ret);
+        else
+            info("set name of thread %d to %s", gettid(), threadname);
+
+    }
+}
+
+void uv_thread_set_name_np(uv_thread_t ut, const char* name) {
+    int ret = 0;
+
+    char threadname[NETDATA_THREAD_NAME_MAX+1];
+    strncpyz(threadname, name, NETDATA_THREAD_NAME_MAX);
+
+#if defined(__FreeBSD__)
+    pthread_set_name_np(ut, threadname);
+#elif defined(__APPLE__)
+    // Apple can only set its own name
+#else
+    ret = pthread_setname_np(ut, threadname);
+#endif
+
+    if (ret)
+        info("cannot set libuv thread name to %s. Err: %d", threadname, ret);
+}
+
+void os_thread_get_current_name_np(char threadname[NETDATA_THREAD_NAME_MAX + 1])
+{
+    threadname[0] = '\0';
+#if defined(__FreeBSD__)
+    pthread_get_name_np(pthread_self(), threadname, NETDATA_THREAD_NAME_MAX + 1);
+#elif defined(HAVE_PTHREAD_GETNAME_NP) /* Linux & macOS */
+    (void)pthread_getname_np(pthread_self(), threadname, NETDATA_THREAD_NAME_MAX + 1);
+#endif
+}
+
 static void *thread_start(void *ptr) {
     netdata_thread = (NETDATA_THREAD *)ptr;
 
@@ -120,6 +176,8 @@ static void *thread_start(void *ptr) {
 
     if(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) != 0)
         error("cannot set pthread cancel state to ENABLE.");
+
+    thread_set_name_np(ptr);
 
     void *ret = NULL;
     pthread_cleanup_push(thread_cleanup, ptr);

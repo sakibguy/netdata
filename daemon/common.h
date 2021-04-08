@@ -8,12 +8,13 @@
 // ----------------------------------------------------------------------------
 // shortcuts for the default netdata configuration
 
-#define config_load(filename, overwrite_used) appconfig_load(&netdata_config, filename, overwrite_used)
+#define config_load(filename, overwrite_used, section) appconfig_load(&netdata_config, filename, overwrite_used, section)
 #define config_get(section, name, default_value) appconfig_get(&netdata_config, section, name, default_value)
 #define config_get_number(section, name, value) appconfig_get_number(&netdata_config, section, name, value)
 #define config_get_float(section, name, value) appconfig_get_float(&netdata_config, section, name, value)
 #define config_get_boolean(section, name, value) appconfig_get_boolean(&netdata_config, section, name, value)
 #define config_get_boolean_ondemand(section, name, value) appconfig_get_boolean_ondemand(&netdata_config, section, name, value)
+#define config_get_duration(section, name, value) appconfig_get_duration(&netdata_config, section, name, value)
 
 #define config_set(section, name, default_value) appconfig_set(&netdata_config, section, name, default_value)
 #define config_set_default(section, name, value) appconfig_set_default(&netdata_config, section, name, value)
@@ -25,7 +26,6 @@
 #define config_move(section_old, name_old, section_new, name_new) appconfig_move(&netdata_config, section_old, name_old, section_new, name_new)
 
 #define config_generate(buffer, only_changed) appconfig_generate(&netdata_config, buffer, only_changed)
-
 
 // ----------------------------------------------------------------------------
 // netdata include files
@@ -50,6 +50,8 @@
 
 // backends for archiving the metrics
 #include "backends/backends.h"
+// the new exporting engine for archiving the metrics
+#include "exporting/exporting_engine.h"
 
 // the netdata API
 #include "web/api/web_api_v1.h"
@@ -60,10 +62,26 @@
 // netdata unit tests
 #include "unit_test.h"
 
+// netdata agent claiming
+#include "claim/claim.h"
+
+// netdata agent cloud link
+#ifndef ACLK_NG
+#include "aclk/legacy/agent_cloud_link.h"
+#else
+#include "aclk/aclk.h"
+#endif
+
+// global GUID map functions
+
+// netdata agent spawn server
+#include "spawn/spawn.h"
+
 // the netdata deamon
 #include "daemon.h"
 #include "main.h"
 #include "signals.h"
+#include "commands.h"
 
 // global netdata daemon variables
 extern char *netdata_configured_hostname;
@@ -74,9 +92,14 @@ extern char *netdata_configured_primary_plugins_dir;
 extern char *netdata_configured_web_dir;
 extern char *netdata_configured_cache_dir;
 extern char *netdata_configured_varlib_dir;
+extern char *netdata_configured_lock_dir;
 extern char *netdata_configured_home_dir;
 extern char *netdata_configured_host_prefix;
 extern char *netdata_configured_timezone;
+extern int netdata_zero_metrics_enabled;
 extern int netdata_anonymous_statistics_enabled;
+
+extern int netdata_ready;
+extern int netdata_cloud_setting;
 
 #endif /* NETDATA_COMMON_H */

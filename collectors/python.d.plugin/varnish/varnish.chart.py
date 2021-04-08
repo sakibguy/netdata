@@ -5,9 +5,8 @@
 
 import re
 
-from bases.collection import find_binary
 from bases.FrameworkServices.ExecutableService import ExecutableService
-
+from bases.collection import find_binary
 
 ORDER = [
     'session_connections',
@@ -104,7 +103,7 @@ CHARTS = {
             ['backend_unhealthy', 'unhealthy', 'incremental'],
             ['backend_reuse', 'reused', 'incremental'],
             ['backend_toolate', 'closed', 'incremental'],
-            ['backend_recycle', 'resycled', 'incremental'],
+            ['backend_recycle', 'recycled', 'incremental'],
             ['backend_fail', 'failed', 'incremental']
         ]
     },
@@ -136,7 +135,64 @@ CHARTS = {
     }
 }
 
+
+def backend_charts_template(name):
+    order = [
+        '{0}_response_statistics'.format(name),
+    ]
+
+    charts = {
+        order[0]: {
+            'options': [None, 'Backend "{0}"'.format(name), 'kilobits/s', 'backend response statistics',
+                        'varnish.backend', 'area'],
+            'lines': [
+                ['{0}_beresp_hdrbytes'.format(name), 'header', 'incremental', 8, 1000],
+                ['{0}_beresp_bodybytes'.format(name), 'body', 'incremental', -8, 1000]
+            ]
+        },
+    }
+
+    return order, charts
+
+
+def storage_charts_template(name):
+    order = [
+        'storage_{0}_usage'.format(name),
+        'storage_{0}_alloc_objs'.format(name)
+    ]
+
+    charts = {
+        order[0]: {
+            'options': [None, 'Storage "{0}" Usage'.format(name), 'KiB', 'storage usage', 'varnish.storage_usage', 'stacked'],
+            'lines': [
+                ['{0}.g_space'.format(name), 'free', 'absolute', 1, 1 << 10],
+                ['{0}.g_bytes'.format(name), 'allocated', 'absolute', 1, 1 << 10]
+            ]
+        },
+        order[1]: {
+            'options': [None, 'Storage "{0}" Allocated Objects'.format(name), 'objects', 'storage usage', 'varnish.storage_alloc_objs', 'line'],
+            'lines': [
+                ['{0}.g_alloc'.format(name), 'allocated', 'absolute']
+            ]
+        }
+    }
+
+    return order, charts
+
+
 VARNISHSTAT = 'varnishstat'
+
+re_version = re.compile(r'varnish-(?:plus-)?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)')
+
+
+class VarnishVersion:
+    def __init__(self, major, minor, patch):
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+
+    def __str__(self):
+        return '{0}.{1}.{2}'.format(self.major, self.minor, self.patch)
 
 
 class Parser:
@@ -177,6 +233,8 @@ class Service(ExecutableService):
         self.instance_name = configuration.get('instance_name')
         self.parser = Parser()
         self.command = None
+        self.collected_vbe = set()
+        self.collected_storages = set()
 
     def create_command(self):
         varnishstat = find_binary(VARNISHSTAT)
@@ -185,10 +243,29 @@ class Service(ExecutableService):
             self.error("can't locate '{0}' binary or binary is not executable by user netdata".format(VARNISHSTAT))
             return False
 
+        command = [varnishstat, '-V']
+        reply = self._get_raw_data(stderr=True, command=command)
+        if not reply:
+            self.error(
+                "no output from '{0}'. Is varnish running? Not enough privileges?".format(' '.join(self.command)))
+            return False
+
+        ver = parse_varnish_version(reply)
+        if not ver:
+            self.error("failed to parse reply from '{0}', used regex :'{1}', reply : {2}".format(
+                ' '.join(command), re_version.pattern, reply))
+            return False
+
         if self.instance_name:
-            self.command = [varnishstat, '-1', '-n', self.instance_name, '-t', '1']
+            self.command = [varnishstat, '-1', '-n', self.instance_name]
         else:
-            self.command = [varnishstat, '-1', '-t', '1']
+            self.command = [varnishstat, '-1']
+
+        if ver.major > 4:
+            self.command.extend(['-t', '1'])
+
+        self.info("varnish version: {0}, will use command: '{1}'".format(ver, ' '.join(self.command)))
+
         return True
 
     def check(self):
@@ -198,19 +275,16 @@ class Service(ExecutableService):
         # STDOUT is not empty
         reply = self._get_raw_data()
         if not reply:
-            self.error("No output from 'varnishstat'. Is it running? Not enough privileges?")
+            self.error("no output from '{0}'. Is it running? Not enough privileges?".format(' '.join(self.command)))
             return False
 
         self.parser.init(reply)
 
         # Output is parsable
         if not self.parser.re_default:
-            self.error('Cant parse the output...')
+            self.error('cant parse the output...')
             return False
 
-        if self.parser.re_backend:
-            backends = [b[0] for b in self.parser.backend_stats(reply)[::2]]
-            self.create_backends_charts(backends)
         return True
 
     def get_data(self):
@@ -227,11 +301,11 @@ class Service(ExecutableService):
         if not server_stats:
             return None
 
-        if self.parser.re_backend:
-            backend_stats = self.parser.backend_stats(raw)
-            data.update(dict(('_'.join([name, param]), value) for name, param, value in backend_stats))
+        stats = dict((param, value) for _, param, value in server_stats)
+        data.update(stats)
 
-        data.update(dict((param, value) for _, param, value in server_stats))
+        self.get_vbe_backends(data, raw)
+        self.get_storages(server_stats)
 
         # varnish 5 uses default.g_bytes and default.g_space
         data['memory_allocated'] = data.get('s0.g_bytes') or data.get('default.g_bytes')
@@ -239,24 +313,73 @@ class Service(ExecutableService):
 
         return data
 
-    def create_backends_charts(self, backends):
-        for backend in backends:
-            chart_name = ''.join([backend, '_response_statistics'])
-            title = 'Backend "{0}"'.format(backend.capitalize())
-            hdr_bytes = ''.join([backend, '_beresp_hdrbytes'])
-            body_bytes = ''.join([backend, '_beresp_bodybytes'])
+    def get_vbe_backends(self, data, raw):
+        if not self.parser.re_backend:
+            return
+        stats = self.parser.backend_stats(raw)
+        if not stats:
+            return
 
-            chart = {
-                chart_name:
-                {
-                    'options': [None, title, 'kilobits/s', 'backend response statistics',
-                                'varnish.backend', 'area'],
-                    'lines': [
-                        [hdr_bytes, 'header', 'incremental', 8, 1000],
-                        [body_bytes, 'body', 'incremental', -8, 1000]
-                        ]
-                    }
-                }
+        for (name, param, value) in stats:
+            data['_'.join([name, param])] = value
+            if name in self.collected_vbe:
+                continue
+            self.collected_vbe.add(name)
+            self.add_backend_charts(name)
 
-            self.order.insert(0, chart_name)
-            self.definitions.update(chart)
+    def get_storages(self, server_stats):
+        # Storage types:
+        #  - SMF: File Storage
+        #  - SMA: Malloc Storage
+        #  - MSE: Massive Storage Engine (Varnish-Plus only)
+        #
+        # Stats example:
+        #  [('SMF.', 'ssdStorage.c_req', '47686'),
+        #  ('SMF.', 'ssdStorage.c_fail', '0'),
+        #  ('SMF.', 'ssdStorage.c_bytes', '668102656'),
+        #  ('SMF.', 'ssdStorage.c_freed', '140980224'),
+        #  ('SMF.', 'ssdStorage.g_alloc', '39753'),
+        #  ('SMF.', 'ssdStorage.g_bytes', '527122432'),
+        #  ('SMF.', 'ssdStorage.g_space', '53159968768'),
+        #  ('SMF.', 'ssdStorage.g_smf', '40130'),
+        #  ('SMF.', 'ssdStorage.g_smf_frag', '311'),
+        #  ('SMF.', 'ssdStorage.g_smf_large', '66')]
+        storages = [name for typ, name, _ in server_stats if typ.startswith(('SMF', 'SMA', 'MSE')) and name.endswith('g_space')]
+        if not storages:
+            return
+        for storage in storages:
+            storage = storage.split('.')[0]
+            if storage in self.collected_storages:
+                continue
+            self.collected_storages.add(storage)
+            self.add_storage_charts(storage)
+
+    def add_backend_charts(self, backend_name):
+        self.add_charts(backend_name, backend_charts_template)
+
+    def add_storage_charts(self, storage_name):
+        self.add_charts(storage_name, storage_charts_template)
+
+    def add_charts(self, name, charts_template):
+        order, charts = charts_template(name)
+
+        for chart_name in order:
+            params = [chart_name] + charts[chart_name]['options']
+            dimensions = charts[chart_name]['lines']
+
+            new_chart = self.charts.add_chart(params)
+            for dimension in dimensions:
+                new_chart.add_dimension(dimension)
+
+
+def parse_varnish_version(lines):
+    m = re_version.search(lines[0])
+    if not m:
+        return None
+
+    m = m.groupdict()
+    return VarnishVersion(
+        int(m['major']),
+        int(m['minor']),
+        int(m['patch']),
+    )

@@ -22,7 +22,7 @@
 #define STATSD_FIRST_PTR_MUTEX_UNLOCK(index) netdata_mutex_unlock(&((index)->first_mutex))
 #define STATSD_DICTIONARY_OPTIONS DICTIONARY_FLAG_DEFAULT
 #else
-#define STATSD_AVL_TREE avl_tree
+#define STATSD_AVL_TREE avl_tree_type
 #define STATSD_AVL_INSERT avl_insert
 #define STATSD_AVL_SEARCH avl_search
 #define STATSD_AVL_INDEX_INIT { .root = NULL, .compar = statsd_metric_compare }
@@ -107,7 +107,7 @@ typedef enum statsd_metric_type {
 
 
 typedef struct statsd_metric {
-    avl avl;                        // indexing - has to be first
+    avl_t avl;                      // indexing - has to be first
 
     const char *name;               // the name of the metric
     uint32_t hash;                  // hash of the name
@@ -376,7 +376,7 @@ static inline STATSD_METRIC *statsd_metric_index_find(STATSD_INDEX *index, const
     tmp.name = name;
     tmp.hash = (hash)?hash:simple_hash(tmp.name);
 
-    return (STATSD_METRIC *)STATSD_AVL_SEARCH(&index->index, (avl *)&tmp);
+    return (STATSD_METRIC *)STATSD_AVL_SEARCH(&index->index, (avl_t *)&tmp);
 }
 
 static inline STATSD_METRIC *statsd_find_or_add_metric(STATSD_INDEX *index, const char *name, STATSD_METRIC_TYPE type) {
@@ -398,7 +398,7 @@ static inline STATSD_METRIC *statsd_find_or_add_metric(STATSD_INDEX *index, cons
             m->histogram.ext = callocz(sizeof(STATSD_METRIC_HISTOGRAM_EXTENSIONS), 1);
             netdata_mutex_init(&m->histogram.ext->mutex);
         }
-        STATSD_METRIC *n = (STATSD_METRIC *)STATSD_AVL_INSERT(&index->index, (avl *)m);
+        STATSD_METRIC *n = (STATSD_METRIC *)STATSD_AVL_INSERT(&index->index, (avl_t *)m);
         if(unlikely(n != m)) {
             freez((void *)m->histogram.ext);
             freez((void *)m->name);
@@ -698,7 +698,10 @@ static inline size_t statsd_process(char *buffer, size_t size, int require_newli
 
         s = name_end = (char *)statsd_parse_skip_up_to(name = s, ':', '|');
         if(name == name_end) {
-            s = statsd_parse_skip_spaces(s);
+            if (*s) {
+                s++;
+                s = statsd_parse_skip_spaces(s);
+            }
             continue;
         }
 
@@ -1014,7 +1017,8 @@ void *statsd_collector_thread(void *ptr) {
             , statsd_rcv_callback
             , statsd_snd_callback
             , statsd_timer_callback
-            , NULL
+            , NULL                     // No access control pattern
+            , 0                        // No dns lookups for access control pattern
             , (void *)d
             , 0                        // tcp request timeout, 0 = disabled
             , statsd.tcp_idle_timeout  // tcp idle timeout, 0 = disabled
@@ -1067,7 +1071,7 @@ static const char *valuetype2string(STATSD_APP_CHART_DIM_VALUE_TYPE type) {
 }
 
 static STATSD_APP_CHART_DIM *add_dimension_to_app_chart(
-        STATSD_APP *app
+        STATSD_APP *app __maybe_unused
         , STATSD_APP_CHART *chart
         , const char *metric_name
         , const char *dim_name
@@ -1323,7 +1327,7 @@ static int statsd_readfile(const char *filename, STATSD_APP *app, STATSD_APP_CHA
             else if (!strcmp(name, "dimension")) {
                 // metric [name [type [multiplier [divisor]]]]
                 char *words[10];
-                pluginsd_split_words(value, words, 10);
+                pluginsd_split_words(value, words, 10, NULL, NULL, 0);
 
                 int pattern = 0;
                 size_t i = 0;
@@ -2222,7 +2226,7 @@ void *statsd_main(void *ptr) {
     // ----------------------------------------------------------------------------------------------------------------
     // statsd setup
 
-    if(!statsd.enabled) return NULL;
+    if(!statsd.enabled) goto cleanup;
 
     statsd_listen_sockets_setup();
     if(!statsd.sockets.opened) {

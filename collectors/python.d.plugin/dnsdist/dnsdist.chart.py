@@ -5,7 +5,6 @@ from json import loads
 
 from bases.FrameworkServices.UrlService import UrlService
 
-
 ORDER = [
     'queries',
     'queries_dropped',
@@ -20,7 +19,6 @@ ORDER = [
     'query_latency',
     'query_latency_avg'
 ]
-
 
 CHARTS = {
     'queries': {
@@ -107,7 +105,7 @@ CHARTS = {
         ]
     },
     'query_latency_avg': {
-        'options': [None, 'Average latency for the last N queries', 'ms/query', 'latency',
+        'options': [None, 'Average latency for the last N queries', 'microseconds', 'latency',
                     'dnsdist.query_latency_avg', 'line'],
         'lines': [
             ['latency-avg100', '100', 'absolute'],

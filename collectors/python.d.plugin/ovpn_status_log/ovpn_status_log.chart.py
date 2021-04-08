@@ -7,7 +7,6 @@ import re
 
 from bases.FrameworkServices.SimpleService import SimpleService
 
-
 update_every = 10
 
 ORDER = [
@@ -72,7 +71,7 @@ class Service(SimpleService):
                 break
         if found:
             return True
-        self.error('Failed to parse ovpenvpn log file')
+        self.error('Failed to parse openvpn log file')
         return False
 
     def _get_raw_data(self):

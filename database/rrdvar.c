@@ -27,7 +27,7 @@ int rrdvar_compare(void* a, void* b) {
 }
 
 static inline RRDVAR *rrdvar_index_add(avl_tree_lock *tree, RRDVAR *rv) {
-    RRDVAR *ret = (RRDVAR *)avl_insert_lock(tree, (avl *)(rv));
+    RRDVAR *ret = (RRDVAR *)avl_insert_lock(tree, (avl_t *)(rv));
     if(ret != rv)
         debug(D_VARIABLES, "Request to insert RRDVAR '%s' into index failed. Already exists.", rv->name);
 
@@ -35,7 +35,7 @@ static inline RRDVAR *rrdvar_index_add(avl_tree_lock *tree, RRDVAR *rv) {
 }
 
 static inline RRDVAR *rrdvar_index_del(avl_tree_lock *tree, RRDVAR *rv) {
-    RRDVAR *ret = (RRDVAR *)avl_remove_lock(tree, (avl *)(rv));
+    RRDVAR *ret = (RRDVAR *)avl_remove_lock(tree, (avl_t *)(rv));
     if(!ret)
         error("Request to remove RRDVAR '%s' from index failed. Not Found.", rv->name);
 
@@ -47,7 +47,7 @@ static inline RRDVAR *rrdvar_index_find(avl_tree_lock *tree, const char *name, u
     tmp.name = (char *)name;
     tmp.hash = (hash)?hash:simple_hash(tmp.name);
 
-    return (RRDVAR *)avl_search_lock(tree, (avl *)&tmp);
+    return (RRDVAR *)avl_search_lock(tree, (avl_t *)&tmp);
 }
 
 inline void rrdvar_free(RRDHOST *host, avl_tree_lock *tree, RRDVAR *rv) {
@@ -68,7 +68,8 @@ inline void rrdvar_free(RRDHOST *host, avl_tree_lock *tree, RRDVAR *rv) {
     freez(rv);
 }
 
-inline RRDVAR *rrdvar_create_and_index(const char *scope, avl_tree_lock *tree, const char *name, RRDVAR_TYPE type, RRDVAR_OPTIONS options, void *value) {
+inline RRDVAR *rrdvar_create_and_index(const char *scope __maybe_unused, avl_tree_lock *tree, const char *name,
+                                       RRDVAR_TYPE type, RRDVAR_OPTIONS options, void *value) {
     char *variable = strdupz(name);
     rrdvar_fix_name(variable);
     uint32_t hash = simple_hash(variable);
@@ -247,6 +248,7 @@ int health_variable_lookup(const char *variable, uint32_t hash, RRDCALC *rc, cal
 struct variable2json_helper {
     BUFFER *buf;
     size_t counter;
+    RRDVAR_OPTIONS options;
 };
 
 static int single_variable2json(void *entry, void *data) {
@@ -254,14 +256,28 @@ static int single_variable2json(void *entry, void *data) {
     RRDVAR *rv = (RRDVAR *)entry;
     calculated_number value = rrdvar2number(rv);
 
-    if(unlikely(isnan(value) || isinf(value)))
-        buffer_sprintf(helper->buf, "%s\n\t\t\"%s\": null", helper->counter?",":"", rv->name);
-    else
-        buffer_sprintf(helper->buf, "%s\n\t\t\"%s\": %0.5" LONG_DOUBLE_MODIFIER, helper->counter?",":"", rv->name, (LONG_DOUBLE)value);
+    if (helper->options == RRDVAR_OPTION_DEFAULT || rv->options & helper->options) {
+        if(unlikely(isnan(value) || isinf(value)))
+            buffer_sprintf(helper->buf, "%s\n\t\t\"%s\": null", helper->counter?",":"", rv->name);
+        else
+            buffer_sprintf(helper->buf, "%s\n\t\t\"%s\": %0.5" LONG_DOUBLE_MODIFIER, helper->counter?",":"", rv->name, (LONG_DOUBLE)value);
 
-    helper->counter++;
+        helper->counter++;
+    }
 
     return 0;
+}
+
+void health_api_v1_chart_custom_variables2json(RRDSET *st, BUFFER *buf) {
+    struct variable2json_helper helper = {
+            .buf = buf,
+            .counter = 0,
+            .options = RRDVAR_OPTION_CUSTOM_CHART_VAR
+    };
+
+    buffer_sprintf(buf, "{");
+    avl_traverse_lock(&st->rrdvar_root_index, single_variable2json, (void *)&helper);
+    buffer_strcat(buf, "\n\t\t\t}");
 }
 
 void health_api_v1_chart_variables2json(RRDSET *st, BUFFER *buf) {
@@ -269,17 +285,21 @@ void health_api_v1_chart_variables2json(RRDSET *st, BUFFER *buf) {
 
     struct variable2json_helper helper = {
             .buf = buf,
-            .counter = 0
+            .counter = 0,
+            .options = RRDVAR_OPTION_DEFAULT
     };
 
     buffer_sprintf(buf, "{\n\t\"chart\": \"%s\",\n\t\"chart_name\": \"%s\",\n\t\"chart_context\": \"%s\",\n\t\"chart_variables\": {", st->id, st->name, st->context);
     avl_traverse_lock(&st->rrdvar_root_index, single_variable2json, (void *)&helper);
+
     buffer_sprintf(buf, "\n\t},\n\t\"family\": \"%s\",\n\t\"family_variables\": {", st->family);
     helper.counter = 0;
     avl_traverse_lock(&st->rrdfamily->rrdvar_root_index, single_variable2json, (void *)&helper);
+
     buffer_sprintf(buf, "\n\t},\n\t\"host\": \"%s\",\n\t\"host_variables\": {", host->hostname);
     helper.counter = 0;
     avl_traverse_lock(&host->rrdvar_root_index, single_variable2json, (void *)&helper);
+
     buffer_strcat(buf, "\n\t}\n}\n");
 }
 

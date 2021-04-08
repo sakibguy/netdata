@@ -314,6 +314,9 @@ NETDATA.dygraphChartCreate = function (state, data) {
         visibility: state.dimensions_visibility.selected2BooleanArray(state.data.dimension_names),
         logscale: NETDATA.chartLibraries.dygraph.isLogScale(state) ? 'y' : undefined,
 
+        // Expects a string in the format "<series name>: <style>" where each series is separated by a |
+        perSeriesStyle: NETDATA.dataAttribute(state.element, 'dygraph-per-series-style', ''),
+
         axes: {
             x: {
                 pixelsPerLabel: NETDATA.dataAttribute(state.element, 'dygraph-xpixelsperlabel', 50),
@@ -483,8 +486,28 @@ NETDATA.dygraphChartCreate = function (state, data) {
             NETDATA.globalSelectionSync.stop();
         },
         underlayCallback: function (canvas, area, g) {
-
             // the chart is about to be drawn
+
+            // update history_tip_element
+            if (state.tmp.dygraph_history_tip_element) {
+                const xHookRightSide = g.toDomXCoord(state.netdata_first);
+                if (xHookRightSide > area.x) {
+                    state.tmp.dygraph_history_tip_element_displayed = true;
+                    // group the styles for possible better performance
+                    state.tmp.dygraph_history_tip_element.setAttribute(
+                      'style',
+                      `display: block; left: ${area.x}px; right: calc(100% - ${xHookRightSide}px);`
+                    )
+                } else {
+                    if (state.tmp.dygraph_history_tip_element_displayed) {
+                        // additional check just for performance
+                        // don't update the DOM when it's not needed
+                        state.tmp.dygraph_history_tip_element.style.display = 'none';
+                        state.tmp.dygraph_history_tip_element_displayed = false;
+                    }
+                }
+            }
+
             // this function renders global highlighted time-frame
 
             if (NETDATA.globalChartUnderlay.isActive()) {
@@ -950,8 +973,28 @@ NETDATA.dygraphChartCreate = function (state, data) {
         //state.tmp.dygraph_options.isZoomedIgnoreProgrammaticZoom = true;
     }
 
-    state.tmp.dygraph_instance = new Dygraph(state.element_chart,
-        data.result.data, state.tmp.dygraph_options);
+    let seriesStyles = NETDATA.dygraphGetSeriesStyle(state.tmp.dygraph_options);
+    state.tmp.dygraph_options.series = seriesStyles;
+
+    state.tmp.dygraph_instance = new Dygraph(
+        state.element_chart,
+        data.result.data,
+        state.tmp.dygraph_options
+    );
+
+    state.tmp.dygraph_history_tip_element = document.createElement('div');
+    state.tmp.dygraph_history_tip_element.innerHTML = `
+        <span class="dygraph__history-tip-content">
+          Want to extend your history of real-time metrics?
+          <br />
+           <a href="https://docs.netdata.cloud/docs/configuration-guide/#increase-the-metrics-retention-period" target=_blank>
+             Configure Netdata's <b>history</b></a>
+           or use the <a href="https://docs.netdata.cloud/database/engine/" target=_blank>DB engine</a>.
+        </span>
+    `;
+    state.tmp.dygraph_history_tip_element.className = 'dygraph__history-tip';
+    state.element_chart.appendChild(state.tmp.dygraph_history_tip_element);
+
 
     state.tmp.dygraph_force_zoom = false;
     state.tmp.dygraph_user_action = false;
@@ -974,4 +1017,49 @@ NETDATA.dygraphChartCreate = function (state, data) {
     }
 
     return true;
+};
+
+NETDATA.dygraphGetSeriesStyle = function(dygraphOptions) {
+    const seriesStyleStr = dygraphOptions.perSeriesStyle;
+    let formattedStyles = {};
+
+    if (seriesStyleStr === '') {
+      return formattedStyles;
+    }
+
+    // Parse the config string into a JSON object
+    let styles = seriesStyleStr.replace(' ', '').split('|');
+
+    styles.forEach(style => {
+        const keys = style.split(':');
+        formattedStyles[keys[0]] = keys[1];
+    });
+
+    for (let key in formattedStyles) {
+        if (formattedStyles.hasOwnProperty(key)) {
+            let settings;
+
+            switch (formattedStyles[key]) {
+                case 'line':
+                    settings = { fillGraph: false };
+                    break;
+                case 'area':
+                    settings = { fillGraph: true };
+                    break;
+                case 'dot':
+                    settings = {
+                        fillGraph: false,
+                        drawPoints: true,
+                        pointSize: dygraphOptions.pointSize
+                    };
+                    break;
+                default:
+                    settings = undefined;
+            }
+
+            formattedStyles[key] = settings;
+        }
+    }
+
+    return formattedStyles;
 };

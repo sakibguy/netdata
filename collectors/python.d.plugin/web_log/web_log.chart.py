@@ -4,9 +4,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import bisect
-import re
 import os
-
+import re
 from collections import namedtuple, defaultdict
 from copy import deepcopy
 
@@ -23,7 +22,6 @@ except ImportError:
 
 from bases.collection import read_last_line
 from bases.FrameworkServices.LogService import LogService
-
 
 ORDER_APACHE_CACHE = [
     'apache_cache',
@@ -660,7 +658,7 @@ class Web:
                                        r' (?P<bytes_sent>\d+)'
                                        r' (?P<resp_length>\d+)'
                                        r' (?P<resp_time>\d+\.\d+)'
-                                       r' (?P<resp_time_upstream>[\d.-]+) ')
+                                       r' (?P<resp_time_upstream>[\d.-]+)')
 
         nginx_ext_append = re.compile(r'(?P<address>[\da-f.:]+)'
                                       r' -.*?"(?P<request>[^"]*)"'
@@ -822,8 +820,8 @@ class Web:
             dim_id = match_dict['vhost'].replace('.', '_')
             if dim_id not in self.data:
                 self.charts['vhost'].add_dimension([dim_id,
-                                                   match_dict['vhost'],
-                                                   'incremental'])
+                                                    match_dict['vhost'],
+                                                    'incremental'])
                 self.data[dim_id] = 0
             self.data[dim_id] += 1
 
@@ -868,7 +866,7 @@ class Web:
         :return:
         """
         code_class = code[0]
-        if code_class == '2' or code == '304' or code_class == '1':
+        if code_class == '2' or code == '304' or code_class == '1' or code == '401':
             self.data['successful_requests'] += 1
         elif code_class == '3':
             self.data['redirects'] += 1
@@ -962,9 +960,9 @@ class Squid:
             return False
         self.storage['dynamic'] = {
             'http_code': {
-                 'chart': 'squid_detailed_response_codes',
-                 'func_dim_id': None,
-                 'func_dim': None
+                'chart': 'squid_detailed_response_codes',
+                'func_dim_id': None,
+                'func_dim': None
             },
             'hier_code': {
                 'chart': 'squid_hier_code',
@@ -1106,7 +1104,7 @@ def get_hist(index, buckets, time):
     :param time:    time
     :return: None
     """
-    for i in range(len(index)-1, -1, -1):
+    for i in range(len(index) - 1, -1, -1):
         if time <= index[i]:
             buckets[i] += 1
         else:

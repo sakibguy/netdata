@@ -12,7 +12,7 @@
 #define TC_LINE_MAX 1024
 
 struct tc_class {
-    avl avl;
+    avl_t avl;
 
     char *id;
     uint32_t hash;
@@ -56,7 +56,7 @@ struct tc_class {
 };
 
 struct tc_device {
-    avl avl;
+    avl_t avl;
 
     char *id;
     uint32_t hash;
@@ -81,7 +81,7 @@ struct tc_device {
     RRDSET *st_tokens;
     RRDSET *st_ctokens;
 
-    avl_tree classes_index;
+    avl_tree_type classes_index;
 
     struct tc_class *classes;
     struct tc_class *last_class;
@@ -102,20 +102,20 @@ static int tc_device_compare(void* a, void* b) {
     else return strcmp(((struct tc_device *)a)->id, ((struct tc_device *)b)->id);
 }
 
-avl_tree tc_device_root_index = {
+avl_tree_type tc_device_root_index = {
         NULL,
         tc_device_compare
 };
 
-#define tc_device_index_add(st) (struct tc_device *)avl_insert(&tc_device_root_index, (avl *)(st))
-#define tc_device_index_del(st) (struct tc_device *)avl_remove(&tc_device_root_index, (avl *)(st))
+#define tc_device_index_add(st) (struct tc_device *)avl_insert(&tc_device_root_index, (avl_t *)(st))
+#define tc_device_index_del(st) (struct tc_device *)avl_remove(&tc_device_root_index, (avl_t *)(st))
 
 static inline struct tc_device *tc_device_index_find(const char *id, uint32_t hash) {
     struct tc_device tmp;
     tmp.id = (char *)id;
     tmp.hash = (hash)?hash:simple_hash(tmp.id);
 
-    return (struct tc_device *)avl_search(&(tc_device_root_index), (avl *)&tmp);
+    return (struct tc_device *)avl_search(&(tc_device_root_index), (avl_t *)&tmp);
 }
 
 
@@ -128,15 +128,15 @@ static int tc_class_compare(void* a, void* b) {
     else return strcmp(((struct tc_class *)a)->id, ((struct tc_class *)b)->id);
 }
 
-#define tc_class_index_add(st, rd) (struct tc_class *)avl_insert(&((st)->classes_index), (avl *)(rd))
-#define tc_class_index_del(st, rd) (struct tc_class *)avl_remove(&((st)->classes_index), (avl *)(rd))
+#define tc_class_index_add(st, rd) (struct tc_class *)avl_insert(&((st)->classes_index), (avl_t *)(rd))
+#define tc_class_index_del(st, rd) (struct tc_class *)avl_remove(&((st)->classes_index), (avl_t *)(rd))
 
 static inline struct tc_class *tc_class_index_find(struct tc_device *st, const char *id, uint32_t hash) {
     struct tc_class tmp;
     tmp.id = (char *)id;
     tmp.hash = (hash)?hash:simple_hash(tmp.id);
 
-    return (struct tc_class *)avl_search(&(st->classes_index), (avl *) &tmp);
+    return (struct tc_class *)avl_search(&(st->classes_index), (avl_t *) &tmp);
 }
 
 // ----------------------------------------------------------------------------
@@ -382,7 +382,9 @@ static inline void tc_device_commit(struct tc_device *d) {
     // --------------------------------------------------------------------
     // bytes
 
-    if(d->enabled_bytes == CONFIG_BOOLEAN_YES || (d->enabled_bytes == CONFIG_BOOLEAN_AUTO && bytes_sum)) {
+    if(d->enabled_bytes == CONFIG_BOOLEAN_YES || (d->enabled_bytes == CONFIG_BOOLEAN_AUTO &&
+                                                  (bytes_sum ||
+                                                   netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         d->enabled_bytes = CONFIG_BOOLEAN_YES;
 
         if(unlikely(!d->st_bytes))
@@ -425,7 +427,9 @@ static inline void tc_device_commit(struct tc_device *d) {
     // --------------------------------------------------------------------
     // packets
 
-    if(d->enabled_packets == CONFIG_BOOLEAN_YES || (d->enabled_packets == CONFIG_BOOLEAN_AUTO && packets_sum)) {
+    if(d->enabled_packets == CONFIG_BOOLEAN_YES || (d->enabled_packets == CONFIG_BOOLEAN_AUTO &&
+                                                    (packets_sum ||
+                                                     netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         d->enabled_packets = CONFIG_BOOLEAN_YES;
 
         if(unlikely(!d->st_packets)) {
@@ -478,7 +482,9 @@ static inline void tc_device_commit(struct tc_device *d) {
     // --------------------------------------------------------------------
     // dropped
 
-    if(d->enabled_dropped == CONFIG_BOOLEAN_YES || (d->enabled_dropped == CONFIG_BOOLEAN_AUTO && dropped_sum)) {
+    if(d->enabled_dropped == CONFIG_BOOLEAN_YES || (d->enabled_dropped == CONFIG_BOOLEAN_AUTO &&
+                                                    (dropped_sum ||
+                                                     netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         d->enabled_dropped = CONFIG_BOOLEAN_YES;
 
         if(unlikely(!d->st_dropped)) {
@@ -531,7 +537,9 @@ static inline void tc_device_commit(struct tc_device *d) {
     // --------------------------------------------------------------------
     // tokens
 
-    if(d->enabled_tokens == CONFIG_BOOLEAN_YES || (d->enabled_tokens == CONFIG_BOOLEAN_AUTO && tokens_sum)) {
+    if(d->enabled_tokens == CONFIG_BOOLEAN_YES || (d->enabled_tokens == CONFIG_BOOLEAN_AUTO &&
+                                                   (tokens_sum ||
+                                                    netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         d->enabled_tokens = CONFIG_BOOLEAN_YES;
 
         if(unlikely(!d->st_tokens)) {
@@ -585,7 +593,9 @@ static inline void tc_device_commit(struct tc_device *d) {
     // --------------------------------------------------------------------
     // ctokens
 
-    if(d->enabled_ctokens == CONFIG_BOOLEAN_YES || (d->enabled_ctokens == CONFIG_BOOLEAN_AUTO && ctokens_sum)) {
+    if(d->enabled_ctokens == CONFIG_BOOLEAN_YES || (d->enabled_ctokens == CONFIG_BOOLEAN_AUTO &&
+                                                    (ctokens_sum ||
+                                                     netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         d->enabled_ctokens = CONFIG_BOOLEAN_YES;
 
         if(unlikely(!d->st_ctokens)) {
@@ -841,12 +851,11 @@ static void tc_main_cleanup(void *ptr) {
 
     if(tc_child_pid) {
         info("TC: killing with SIGTERM tc-qos-helper process %d", tc_child_pid);
-        if(killpid(tc_child_pid, SIGTERM) != -1) {
+        if(killpid(tc_child_pid) != -1) {
             siginfo_t info;
 
             info("TC: waiting for tc plugin child process pid %d to exit...", tc_child_pid);
             waitid(P_PID, (id_t) tc_child_pid, &info, WEXITED);
-            // info("TC: finished tc plugin child process pid %d.", tc_child_pid);
         }
 
         tc_child_pid = 0;
@@ -874,9 +883,6 @@ void *tc_main(void *ptr) {
     uint32_t SETDEVICEGROUP_HASH = simple_hash("SETDEVICEGROUP");
     uint32_t SETCLASSNAME_HASH = simple_hash("SETCLASSNAME");
     uint32_t WORKTIME_HASH = simple_hash("WORKTIME");
-#ifdef DETACH_PLUGINS_FROM_NETDATA
-    uint32_t MYPID_HASH = simple_hash("MYPID");
-#endif
     uint32_t first_hash;
 
     snprintfz(command, TC_LINE_MAX, "%s/tc-qos-helper.sh", netdata_configured_primary_plugins_dir);
@@ -1119,17 +1125,6 @@ void *tc_main(void *ptr) {
                 rrdset_done(sttime);
 
             }
-#ifdef DETACH_PLUGINS_FROM_NETDATA
-            else if(unlikely(first_hash == MYPID_HASH && (strcmp(words[0], "MYPID") == 0))) {
-                // debug(D_TC_LOOP, "MYPID line '%s'", words[1]);
-                char *id = words[1];
-                pid_t pid = atol(id);
-
-                if(likely(pid)) tc_child_pid = pid;
-
-                debug(D_TC_LOOP, "TC: Child PID is %d.", tc_child_pid);
-            }
-#endif
             //else {
             //  debug(D_TC_LOOP, "IGNORED line");
             //}

@@ -36,11 +36,12 @@ m4_ifdef([AM_SILENT_RULES], [
     ])
 AC_CANONICAL_HOST
 AC_PROG_CC
+AC_PROG_CC_C99
 AM_PROG_CC_C_O
+AC_PROG_CXX
 AC_PROG_INSTALL
 PKG_PROG_PKG_CONFIG
 AC_USE_SYSTEM_EXTENSIONS
-
 
 # -----------------------------------------------------------------------------
 # configurable options
@@ -69,7 +70,30 @@ AC_ARG_ENABLE(
     ,
     [enable_plugin_xenstat="detect"]
 )
-
+AC_ARG_ENABLE(
+    [backend-kinesis],
+    [AS_HELP_STRING([--enable-backend-kinesis], [enable kinesis backend @<:@default autodetect@:>@])],
+    ,
+    [enable_backend_kinesis="detect"]
+)
+AC_ARG_ENABLE(
+    [exporting-pubsub],
+    [AS_HELP_STRING([--enable-exporting-pubsub], [enable pubsub exporting connector @<:@default autodetect@:>@])],
+    ,
+    [enable_exporting_pubsub="detect"]
+)
+AC_ARG_ENABLE(
+    [backend-prometheus-remote-write],
+    [AS_HELP_STRING([--enable-backend-prometheus-remote-write], [enable prometheus remote write backend @<:@default autodetect@:>@])],
+    ,
+    [enable_backend_prometheus_remote_write="detect"]
+)
+AC_ARG_ENABLE(
+    [backend-mongodb],
+    [AS_HELP_STRING([--enable-backend-mongodb], [enable mongodb backend @<:@default autodetect@:>@])],
+    ,
+    [enable_backend_mongodb="detect"]
+)
 AC_ARG_ENABLE(
     [pedantic],
     [AS_HELP_STRING([--enable-pedantic], [enable pedantic compiler warnings @<:@default disabled@:>@])],
@@ -124,7 +148,66 @@ AC_ARG_ENABLE(
     ,
     [enable_lto="detect"]
 )
+AC_ARG_ENABLE(
+    [https],
+    [AS_HELP_STRING([--enable-https], [Enable SSL support @<:@default autodetect@:>@])],
+    ,
+    [enable_https="detect"]
+)
+AC_ARG_ENABLE(
+    [dbengine],
+    [AS_HELP_STRING([--disable-dbengine], [disable netdata dbengine @<:@default autodetect@:>@])],
+    ,
+    [enable_dbengine="detect"]
+)
+AC_ARG_ENABLE(
+    [jsonc],
+    [AS_HELP_STRING([--enable-jsonc], [Enable JSON-C support @<:@default autodetect@:>@])],
+    ,
+    [enable_jsonc="detect"]
+)
+AC_ARG_ENABLE(
+    [ebpf],
+    [AS_HELP_STRING([--disable-ebpf], [Disable eBPF support @<:@default autodetect@:>@])],
+    ,
+    [enable_ebpf="detect"]
+)
+AC_ARG_WITH(
+    [bundled-lws],
+    [AS_HELP_STRING([--with-bundled-lws=DIR], [Use a specific Libwebsockets static library @<:@default use system library@:>@])],
+    [
+        with_bundled_lws="yes"
+        bundled_lws_dir="${withval}"
+    ],
+    [with_bundled_lws="no"]
+)
 
+# -----------------------------------------------------------------------------
+# Enforce building with C99, bail early if we can't.
+test "${ac_cv_prog_cc_c99}" = "no" && AC_MSG_ERROR([Netdata rquires a compiler that supports C99 to build])
+
+# -----------------------------------------------------------------------------
+# Check if cloud is enabled and if the functionality is available
+
+AC_ARG_ENABLE(
+    [cloud],
+    [AS_HELP_STRING([--disable-cloud],
+                    [Disables all cloud functionality])],
+    [ enable_cloud="$enableval" ],
+    [ enable_cloud="detect" ]
+)
+
+AC_ARG_WITH(
+    [aclk-ng],
+    [AS_HELP_STRING([--with-aclk-ng],
+                    [Requires ACLK-NG to be used even in case ACLK Legacy can run on this system])],
+    [aclk_ng="$withval"],
+    [aclk_ng="fallback"]
+)
+
+if test "${enable_cloud}" = "no"; then
+    AC_DEFINE([DISABLE_CLOUD], [1], [disable netdata cloud functionality])
+fi
 
 # -----------------------------------------------------------------------------
 # netdata required checks
@@ -181,7 +264,7 @@ case "$host_os" in
 freebsd*)
     build_target=freebsd
     build_target_id=2
-    CFLAGS="${CFLAGS} -I/usr/local/include"
+    CFLAGS="${CFLAGS} -I/usr/local/include -L/usr/local/lib"
     ;;
 darwin*)
     build_target=macos
@@ -207,6 +290,12 @@ ACX_PTHREAD(, [AC_MSG_ERROR([Cannot initialize pthread environment])])
 LIBS="${PTHREAD_LIBS} ${LIBS}"
 CFLAGS="${CFLAGS} ${PTHREAD_CFLAGS}"
 CC="${PTHREAD_CC}"
+
+AC_CHECK_LIB(
+[pthread],
+[pthread_getname_np],
+[AC_DEFINE([HAVE_PTHREAD_GETNAME_NP], [1], [Is set if pthread_getname_np is available])]
+)
 
 
 # -----------------------------------------------------------------------------
@@ -236,6 +325,31 @@ AC_MSG_RESULT([${with_math}])
 
 
 # -----------------------------------------------------------------------------
+# libuv multi-platform support library with a focus on asynchronous I/O
+# TODO: check version, uv_fs_scandir_next only available in version >= 1.0
+
+AC_CHECK_LIB(
+    [uv],
+    [uv_fs_scandir_next],
+    [UV_LIBS="-luv"]
+)
+test -z "${UV_LIBS}" && \
+    AC_MSG_ERROR([libuv required but not found. Try installing 'libuv1-dev' or 'libuv-devel'.])
+OPTIONAL_UV_CFLAGS="${UV_CFLAGS}"
+OPTIONAL_UV_LIBS="${UV_LIBS}"
+
+
+# -----------------------------------------------------------------------------
+# lz4 Extremely Fast Compression algorithm
+
+AC_CHECK_LIB(
+    [lz4],
+    [LZ4_compress_default],
+    [LZ4_LIBS="-llz4"]
+)
+
+
+# -----------------------------------------------------------------------------
 # zlib
 
 PKG_CHECK_MODULES(
@@ -250,7 +364,7 @@ AC_MSG_CHECKING([if zlib should be used])
 if test "${with_zlib}" != "no" -a "${have_zlib}" = "yes"; then
     with_zlib="yes"
     AC_DEFINE([NETDATA_WITH_ZLIB], [1], [zlib usability])
-    OPTIONAL_ZLIB_CLFAGS="${ZLIB_CFLAGS}"
+    OPTIONAL_ZLIB_CFLAGS="${ZLIB_CFLAGS}"
     OPTIONAL_ZLIB_LIBS="${ZLIB_LIBS}"
 else
     with_zlib="no"
@@ -268,9 +382,172 @@ PKG_CHECK_MODULES(
     [AC_MSG_ERROR([libuuid required but not found. Try installing 'uuid-dev' or 'libuuid-devel'.])]
 )
 AC_DEFINE([NETDATA_WITH_UUID], [1], [uuid usability])
-OPTIONAL_UUID_CLFAGS="${UUID_CFLAGS}"
+OPTIONAL_UUID_CFLAGS="${UUID_CFLAGS}"
 OPTIONAL_UUID_LIBS="${UUID_LIBS}"
 
+# -----------------------------------------------------------------------------
+# OpenSSL Cryptography and SSL/TLS Toolkit
+
+AC_CHECK_LIB(
+    [crypto],
+    [SHA256_Init],
+    [SSL_LIBS="-lcrypto -lssl"]
+)
+
+AC_CHECK_LIB(
+    [crypto],
+    [X509_VERIFY_PARAM_set1_host],
+    [ssl_host_validation="yes"],
+    [ssl_host_validation="no"]
+)
+
+test -z "${SSL_LIBS}" || \
+    AC_DEFINE([HAVE_CRYPTO], [1], [libcrypto availability])
+
+if test "${ssl_host_validation}" = "no"; then
+    AC_DEFINE([HAVE_X509_VERIFY_PARAM_set1_host], [0], [ssl host validation])
+    AC_MSG_WARN([DISABLING SSL HOSTNAME VALIDATION BECAUSE IT IS NOT AVAILABLE ON THIS SYSTEM.])
+else
+    AC_DEFINE([HAVE_X509_VERIFY_PARAM_set1_host], [1], [ssl host validation])
+fi
+
+# -----------------------------------------------------------------------------
+# JSON-C library
+
+PKG_CHECK_MODULES([JSON],[json-c],AC_CHECK_LIB(
+    [json-c],
+    [json_object_get_type],
+    [JSONC_LIBS="-ljson-c"]),AC_CHECK_LIB(
+        [json],
+        [json_object_get_type],
+        [JSONC_LIBS="-ljson"])
+    )
+
+OPTIONAL_JSONC_LIBS="${JSONC_LIBS}"
+
+# -----------------------------------------------------------------------------
+# DB engine and HTTPS
+test "${enable_dbengine}" = "yes" -a -z "${LZ4_LIBS}" && \
+    AC_MSG_ERROR([liblz4 required but not found. Try installing 'liblz4-dev' or 'lz4-devel'.])
+
+
+AC_ARG_WITH([libJudy],
+            [AS_HELP_STRING([--with-libJudy=PREFIX],[Use a specific Judy library (default is system-library)])],
+            [
+                libJudy_dir="$withval"
+                AC_MSG_CHECKING(for libJudy in $withval)
+                if test -f "${libJudy_dir}/libJudy.a" -a -f "${libJudy_dir}/Judy.h"; then
+                    LIBS_BACKUP="${LIBS}"
+                    LIBS="${libJudy_dir}/libJudy.a"
+                    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "${libJudy_dir}/Judy.h"
+                                                     int main (int argc, char **argv) {
+                                                        Pvoid_t PJLArray = (Pvoid_t) NULL;
+                                                        Word_t * PValue;
+                                                        Word_t Index;
+                                                        JLI(PValue, PJLArray, Index);
+                                                     }]])],
+                                                     [HAVE_libJudy_a="yes"],
+                                                     [HAVE_libJudy_a="no"])
+                    LIBS="${LIBS_BACKUP}"
+                    JUDY_LIBS="${libJudy_dir}/libJudy.a"
+                    JUDY_CFLAGS="-I${libJudy_dir}"
+                    AC_MSG_RESULT([$HAVE_libJudy_a])
+                else
+                    libjudy_dir=""
+                    HAVE_libJudy_a="no"
+                    AC_MSG_RESULT([$HAVE_libJudy_a])
+                fi
+            ],
+            [HAVE_libJudy_a="no"])
+
+if test "${HAVE_libJudy_a}" = "no"; then
+    AC_CHECK_LIB(
+                    [Judy],
+                    [JudyLIns],
+                    [JUDY_LIBS="-lJudy"]
+                )
+fi
+
+test "${enable_dbengine}" = "yes" -a -z "${JUDY_LIBS}" && \
+    AC_MSG_ERROR([libJudy required but not found. Try installing 'libjudy-dev' or 'Judy-devel'.])
+
+test "${enable_https}" = "yes" -a -z "${SSL_LIBS}" && \
+    AC_MSG_ERROR([OpenSSL required for HTTPS but not found. Try installing 'libssl-dev' or 'openssl-devel'.])
+
+test "${enable_dbengine}" = "yes" -a -z "${SSL_LIBS}" && \
+    AC_MSG_ERROR([OpenSSL required for DBENGINE but not found. Try installing 'libssl-dev' or 'openssl-devel'.])
+
+AC_MSG_CHECKING([if netdata dbengine should be used])
+if test "${enable_dbengine}" != "no" -a "${UV_LIBS}" -a "${LZ4_LIBS}" -a "${JUDY_LIBS}" -a "${SSL_LIBS}"; then
+    enable_dbengine="yes"
+    AC_DEFINE([ENABLE_DBENGINE], [1], [netdata dbengine usability])
+    OPTIONAL_LZ4_CFLAGS="${LZ4_CFLAGS}"
+    OPTIONAL_LZ4_LIBS="${LZ4_LIBS}"
+    OPTIONAL_JUDY_CFLAGS="${JUDY_CFLAGS}"
+    OPTIONAL_JUDY_LIBS="${JUDY_LIBS}"
+    OPTIONAL_SSL_CFLAGS="${SSL_CFLAGS}"
+    OPTIONAL_SSL_LIBS="${SSL_LIBS}"
+else
+    enable_dbengine="no"
+fi
+AC_MSG_RESULT([${enable_dbengine}])
+AM_CONDITIONAL([ENABLE_DBENGINE], [test "${enable_dbengine}" = "yes"])
+
+AC_MSG_CHECKING([if netdata https should be used])
+if test "${enable_https}" != "no" -a "${SSL_LIBS}"; then
+    enable_https="yes"
+    AC_DEFINE([ENABLE_HTTPS], [1], [netdata HTTPS usability])
+    OPTIONAL_SSL_CFLAGS="${SSL_CFLAGS}"
+    OPTIONAL_SSL_LIBS="${SSL_LIBS}"
+else
+    enable_https="no"
+fi
+AC_MSG_RESULT([${enable_https}])
+AM_CONDITIONAL([ENABLE_HTTPS], [test "${enable_https}" = "yes"])
+
+# -----------------------------------------------------------------------------
+# JSON-C
+
+if test "${enable_jsonc}" != "no" -a -z "${JSONC_LIBS}"; then
+    # Try and detect manual static build presence (from netdata-installer.sh)
+    AC_MSG_CHECKING([if statically built json-c is present])
+    HAVE_libjson_c_a="no"
+    if test -f "externaldeps/jsonc/libjson-c.a"; then
+        LIBS_BKP="${LIBS}"
+        LIBS="externaldeps/jsonc/libjson-c.a"
+        AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "externaldeps/jsonc/json-c/json.h"
+                                         int main (int argc, char **argv) {
+                                             struct json_object *jobj;
+                                             char *str = "{ \"msg-type\": \"random\" }";
+                                             jobj = json_tokener_parse(str);
+                                             json_object_get_type(jobj);
+                                         }]])],
+                                        [HAVE_libjson_c_a="yes"],
+                                        [HAVE_libjson_c_a="no"])
+        LIBS="${LIBS_BKP}"
+    fi
+
+	if test "${HAVE_libjson_c_a}" = "yes"; then
+		AC_DEFINE([LINK_STATIC_JSONC], [1], [static json-c should be used])
+		JSONC_LIBS="static"
+		OPTIONAL_JSONC_STATIC_CFLAGS="-I externaldeps/jsonc"
+	fi
+	AC_MSG_RESULT([${HAVE_libjson_c_a}])
+fi
+AM_CONDITIONAL([LINK_STATIC_JSONC], [test "${JSONC_LIBS}" = "static"])
+
+test "${enable_jsonc}" = "yes" -a -z "${JSONC_LIBS}" && \
+    AC_MSG_ERROR([JSON-C required but not found. Try installing 'libjson-c-dev' or 'json-c'.])
+
+AC_MSG_CHECKING([if json-c should be used])
+if test "${enable_jsonc}" != "no" -a "${JSONC_LIBS}"; then
+	enable_jsonc="yes"
+	AC_DEFINE([ENABLE_JSONC], [1], [netdata json-c usability])
+else
+	enable_jsonc="no"
+fi
+AC_MSG_RESULT([${enable_jsonc}])
+AM_CONDITIONAL([ENABLE_JSONC], [test "${enable_jsonc}" = "yes"])
 
 # -----------------------------------------------------------------------------
 # compiler options
@@ -291,6 +568,14 @@ if test "${GCC}" = "yes"; then
 else
     AC_DEFINE_UNQUOTED([likely(x)], [(x)], [gcc branch optimization])
     AC_DEFINE_UNQUOTED([unlikely(x)], [(x)], [gcc branch optimization])
+fi
+
+if test "${GCC}" = "yes"; then
+    AC_DEFINE([__always_unused], [__attribute__((unused))], [gcc unused attribute])
+    AC_DEFINE([__maybe_unused], [__attribute__((unused))], [gcc unused attribute])
+else
+    AC_DEFINE([__always_unused], [], [dummy unused attribute])
+    AC_DEFINE([__maybe_unused], [], [dummy unused attribute])
 fi
 
 if test "${enable_pedantic}" = "yes"; then
@@ -342,7 +627,7 @@ AC_MSG_CHECKING([if libcap should be used])
 if test "${with_libcap}" != "no" -a "${have_libcap}" = "yes"; then
     with_libcap="yes"
     AC_DEFINE([HAVE_CAPABILITY], [1], [libcap usability])
-    OPTIONAL_LIBCAP_CLFAGS="${LIBCAP_CFLAGS}"
+    OPTIONAL_LIBCAP_CFLAGS="${LIBCAP_CFLAGS}"
     OPTIONAL_LIBCAP_LIBS="${LIBCAP_LIBS}"
 else
     with_libcap="no"
@@ -350,12 +635,139 @@ fi
 AC_MSG_RESULT([${with_libcap}])
 AM_CONDITIONAL([ENABLE_CAPABILITY], [test "${with_libcap}" = "yes"])
 
+# -----------------------------------------------------------------------------
+# ACLK
+
+AC_MSG_CHECKING([if cloud functionality should be enabled])
+AC_MSG_RESULT([${enable_cloud}])
+if test "$enable_cloud" != "no" -a "$aclk_ng" != "yes"; then
+    # just to have all messages that can fail ACLK build in one place
+    # so it is easier to see why it can't be built
+    if test -n "${SSL_LIBS}"; then
+        OPTIONAL_SSL_CFLAGS="${SSL_CFLAGS}"
+        OPTIONAL_SSL_LIBS="${SSL_LIBS}"
+    else
+        AC_MSG_WARN([OpenSSL required for agent-cloud-link but not found. Try installing 'libssl-dev' or 'openssl-devel'.])
+    fi
+
+    AC_MSG_CHECKING([if libmosquitto static lib is present (and builds)])
+    if test -f "externaldeps/mosquitto/libmosquitto.a"; then
+        LIBS_BKP="${LIBS}"
+        LIBS="externaldeps/mosquitto/libmosquitto.a ${OPTIONAL_SSL_LIBS} ${LIBS_BKP}"
+        AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "externaldeps/mosquitto/mosquitto.h"
+                                         int main (int argc, char **argv) {
+                                             int m,mm,r;
+                                             mosquitto_lib_version(&m, &mm, &r);
+                                         }]])],
+                                        [HAVE_libmosquitto_a="yes"],
+                                        [HAVE_libmosquitto_a="no"])
+        LIBS="${LIBS_BKP}"
+    else
+        HAVE_libmosquitto_a="no"
+        AC_DEFINE([ACLK_NO_LIBMOSQ], [1], [Libmosquitto.a was not found during build.])
+    fi
+    AC_MSG_RESULT([${HAVE_libmosquitto_a}])
+
+    if test "${with_bundled_lws}" = "yes"; then
+        AC_MSG_CHECKING([if libwebsockets static lib is present])
+        if test -f "${bundled_lws_dir}/libwebsockets.a"; then
+            LWS_CFLAGS="-I ${bundled_lws_dir}/include"
+            OPTIONAL_LWS_LIBS="${bundled_lws_dir}/libwebsockets.a"
+            AC_MSG_RESULT([yes])
+            AC_DEFINE([BUNDLED_LWS], [1], [using statically linked libwebsockets])
+        else
+            AC_DEFINE([ACLK_NO_LWS], [1], [libwebsockets.a was not found during build.])
+            # this should be error if installer ever changes default to system
+            # as currently this is default we prefer building netdata without ACLK
+            # instead of error fail
+            AC_MSG_RESULT([no])
+            AC_MSG_WARN([You required static libwebsockets to be used but we can't use it. Disabling ACLK])
+        fi
+    else
+        AC_CHECK_LIB([websockets],
+            [lws_get_vhost_by_name],
+            [OPTIONAL_LWS_LIBS="-lwebsockets"],
+            [AC_DEFINE([ACLK_NO_LWS], [1], [usable system libwebsockets was not found during build.])])
+    fi
+
+    if test "${build_target}" = "linux" -a "${enable_cloud}" != "no"; then
+        if test "${have_libcap}" = "yes" -a "${with_libcap}" = "no"; then
+            AC_MSG_ERROR([agent-cloud-link can't be built without libcap. Disable it by --disable-cloud or enable libcap])
+        fi
+        if test "${with_libcap}" = "yes"; then
+            LWS_CFLAGS+=" ${LIBCAP_CFLAGS}"
+        fi
+    fi
+
+    # next 2 lines are just to have info for ACLK dependencies in common place
+    AC_MSG_CHECKING([if json-c available for ACLK])
+    AC_MSG_RESULT([${enable_jsonc}])
+
+    test "${enable_cloud}" = "yes" -a "${enable_jsonc}" = "no" && \
+        AC_MSG_ERROR([You have asked for ACLK to be built but no json-c available. ACLK requires json-c])
+
+    AC_MSG_CHECKING([if netdata agent-cloud-link can be enabled])
+    if test "${HAVE_libmosquitto_a}" = "yes" -a -n "${OPTIONAL_LWS_LIBS}" -a -n "${SSL_LIBS}" -a "${enable_jsonc}" = "yes"; then
+        can_enable_aclk="yes"
+    else
+        can_enable_aclk="no"
+    fi
+    AC_MSG_RESULT([${can_enable_aclk}])
+
+# TODO fix this (you need to try fallback)
+    test "${enable_cloud}" = "yes" -a "${can_enable_aclk}" = "no" && \
+        AC_MSG_ERROR([User required agent-cloud-link but it can't be built!])
+
+    AC_MSG_CHECKING([if netdata agent-cloud-link should/will be enabled])
+    if test "${enable_cloud}" = "detect"; then
+        enable_aclk=$can_enable_aclk
+    else
+        enable_aclk=$enable_cloud
+    fi
+
+    if test "${enable_aclk}" = "yes"; then
+        AC_DEFINE([ENABLE_ACLK], [1], [netdata ACLK])
+    fi
+
+    AC_MSG_RESULT([${enable_aclk}])
+fi
+
+if test "$enable_cloud" = "no" -a "$aclk_ng" = "yes"; then
+    AC_MSG_ERROR([--disable-cloud && --aclk-ng not allowed together (such configuration is self contradicting)])
+fi
+
+if test "$enable_cloud" != "no" -a "$aclk_ng" != "no"; then
+    AC_MSG_CHECKING([if JSON-C available for ACLK Next Generation])
+    if test "$enable_jsonc" != "yes"; then
+        AC_MSG_RESULT([no])
+    else
+        AC_MSG_RESULT([yes])
+        if test "$aclk_ng" != "yes" -a "$enable_aclk" == "no"; then #default "fallback"
+            AC_MSG_NOTICE([ACLK Legacy could not be built. Trying ACLK-NG as fallback.])
+            aclk_ng="yes"
+        fi
+        if test "$aclk_ng" = "yes"; then
+    #TODO Check OpenSSL and JSON-C
+            AC_MSG_CHECKING([if ACLK Next Generation can be built])
+            AC_DEFINE([ACLK_NG], [1], [ACLK Next Generation Should be used])
+            AC_DEFINE([ENABLE_ACLK], [1], [netdata ACLK])
+            enable_aclk="yes"
+            AC_MSG_RESULT([yes])
+            OPTIONAL_MQTT_WSS_CFLAGS="-Imqtt_websockets/src/include"
+        fi
+    fi
+fi
+AC_SUBST([enable_cloud])
+AC_SUBST([enable_aclk])
+AM_CONDITIONAL([ACLK_NG], [test "${aclk_ng}" = "yes"])
+AM_CONDITIONAL([ENABLE_ACLK], [test "${enable_aclk}" = "yes"])
 
 # -----------------------------------------------------------------------------
 # apps.plugin
 
 AC_MSG_CHECKING([if apps.plugin should be enabled])
 if test "${build_target}" != "macos"; then
+    AC_DEFINE([ENABLE_APPS_PLUGIN], [1], [apps.plugin])
     enable_plugin_apps="yes"
 else
     enable_plugin_apps="no"
@@ -403,7 +815,7 @@ AC_MSG_CHECKING([if freeipmi.plugin should be enabled])
 if test "${enable_plugin_freeipmi}" != "no" -a "${have_ipmimonitoring}" = "yes"; then
     enable_plugin_freeipmi="yes"
     AC_DEFINE([HAVE_FREEIPMI], [1], [ipmimonitoring usability])
-    OPTIONAL_IPMIMONITORING_CLFAGS="${IPMIMONITORING_CFLAGS}"
+    OPTIONAL_IPMIMONITORING_CFLAGS="${IPMIMONITORING_CFLAGS}"
     OPTIONAL_IPMIMONITORING_LIBS="${IPMIMONITORING_LIBS}"
 else
     enable_plugin_freeipmi="no"
@@ -451,7 +863,7 @@ if test "${enable_plugin_cups}" != "no" -a "${have_cups}" = "yes"; then
     CUPS_CFLAGS="${CUPS_CFLAGS} `$CUPSCONFIG --cflags`"
     CUPS_LIBS="${CUPS_LIBS} `$CUPSCONFIG --libs`"
 
-    OPTIONAL_CUPS_CLFAGS="${CUPS_CFLAGS}"
+    OPTIONAL_CUPS_CFLAGS="${CUPS_CFLAGS}"
     OPTIONAL_CUPS_LIBS="${CUPS_LIBS}"
 else
     enable_plugin_cups="no"
@@ -463,7 +875,16 @@ AM_CONDITIONAL([ENABLE_PLUGIN_CUPS], [test "${enable_plugin_cups}" = "yes"])
 # -----------------------------------------------------------------------------
 # nfacct.plugin - libmnl, libnetfilter_acct
 
-AC_CHECK_HEADERS_ONCE([linux/netfilter/nfnetlink_conntrack.h])
+AC_CHECK_HEADER(
+    [linux/netfilter/nfnetlink_conntrack.h],
+    [AC_CHECK_DECL(
+        [CTA_STATS_MAX],
+        [have_nfnetlink_conntrack=yes],
+        [have_nfnetlink_conntrack=no],
+        [#include <linux/netfilter/nfnetlink_conntrack.h>]
+    )],
+    [have_nfnetlink_conntrack=no]
+)
 
 PKG_CHECK_MODULES(
     [NFACCT],
@@ -489,6 +910,9 @@ PKG_CHECK_MODULES(
     [have_libmnl=no]
 )
 
+test "${enable_plugin_nfacct}" = "yes" -a "${have_nfnetlink_conntrack}" != "yes" && \
+    AC_MSG_ERROR([nfnetlink_conntrack.h required but not found or too old])
+
 test "${enable_plugin_nfacct}" = "yes" -a "${have_libnetfilter_acct}" != "yes" && \
     AC_MSG_ERROR([netfilter_acct required but not found])
 
@@ -496,11 +920,12 @@ test "${enable_plugin_nfacct}" = "yes" -a "${have_libmnl}" != "yes" && \
     AC_MSG_ERROR([libmnl required but not found. Try installing 'libmnl-dev' or 'libmnl-devel'])
 
 AC_MSG_CHECKING([if nfacct.plugin should be enabled])
-if test "${enable_plugin_nfacct}" != "no" -a "${have_libnetfilter_acct}" = "yes" -a "${have_libmnl}" = "yes"; then
+if test "${enable_plugin_nfacct}" != "no" -a "${have_libnetfilter_acct}" = "yes" \
+                                          -a "${have_libmnl}" = "yes" \
+                                          -a "${have_nfnetlink_conntrack}" = "yes"; then
     enable_plugin_nfacct="yes"
-    AC_DEFINE([HAVE_LIBMNL], [1], [libmnl usability])
-    AC_DEFINE([HAVE_LIBNETFILTER_ACCT], [1], [libnetfilter_acct usability])
-    OPTIONAL_NFACCT_CLFAGS="${NFACCT_CFLAGS} ${LIBMNL_CFLAGS}"
+    AC_DEFINE([HAVE_NFACCT], [1], [netfilter accounting usability])
+    OPTIONAL_NFACCT_CFLAGS="${NFACCT_CFLAGS} ${LIBMNL_CFLAGS}"
     OPTIONAL_NFACCT_LIBS="${NFACCT_LIBS} ${LIBMNL_LIBS}"
 else
     enable_plugin_nfacct="no"
@@ -565,15 +990,392 @@ AC_MSG_CHECKING([if xenstat.plugin should be enabled])
 if test "${enable_plugin_xenstat}" != "no" -a "${have_libxenstat}" = "yes" -a "${have_libxenlight}" = "yes" -a "${have_libyajl}" = "yes"; then
     enable_plugin_xenstat="yes"
     AC_DEFINE([HAVE_LIBXENSTAT], [1], [libxenstat usability])
-    AC_DEFINE([HAVE_LIBXENLIGHT], [1], [libxenlight usability])
-    AC_DEFINE([HAVE_LIBYAJL], [1], [libyajl usability])
-    OPTIONAL_XENSTAT_CLFAGS="${XENLIGHT_CFLAGS} ${YAJL_CFLAGS}"
+    OPTIONAL_XENSTAT_CFLAGS="${XENLIGHT_CFLAGS} ${YAJL_CFLAGS}"
     OPTIONAL_XENSTAT_LIBS="-lxenstat ${XENLIGHT_LIBS} ${YAJL_LIBS}"
 else
     enable_plugin_xenstat="no"
 fi
 AC_MSG_RESULT([${enable_plugin_xenstat}])
 AM_CONDITIONAL([ENABLE_PLUGIN_XENSTAT], [test "${enable_plugin_xenstat}" = "yes"])
+
+if test "${enable_plugin_xenstat}" == "yes"; then
+    AC_MSG_CHECKING([for xenstat_vbd_error in -lxenstat])
+    AC_TRY_LINK(
+        [ #include <xenstat.h> ],
+        [
+            xenstat_vbd * vbd;
+            int out = xenstat_vbd_error(vbd);
+        ],
+        [
+            have_xenstat_vbd_error=yes
+            AC_DEFINE([HAVE_XENSTAT_VBD_ERROR], [1], [xenstat_vbd_error usability])
+        ],
+        [ have_xenstat_vbd_error=no ]
+    )
+    AC_MSG_RESULT([${have_xenstat_vbd_error}])
+fi
+
+# -----------------------------------------------------------------------------
+# perf.plugin
+
+AC_CHECK_HEADER(
+    [linux/perf_event.h],
+    [AC_CHECK_DECL(
+        [PERF_COUNT_HW_REF_CPU_CYCLES],
+        [have_perf_event=yes],
+        [have_perf_event=no],
+        [#include <linux/perf_event.h>]
+    )],
+    [have_perf_event=no]
+)
+
+AC_MSG_CHECKING([if perf.plugin should be enabled])
+if test "${build_target}" == "linux" -a "${have_perf_event}" = "yes"; then
+    AC_DEFINE([ENABLE_PERF_PLUGIN], [1], [perf.plugin])
+    enable_plugin_perf="yes"
+else
+    enable_plugin_perf="no"
+fi
+AC_MSG_RESULT([${enable_plugin_perf}])
+AM_CONDITIONAL([ENABLE_PLUGIN_PERF], [test "${enable_plugin_perf}" = "yes"])
+
+# -----------------------------------------------------------------------------
+# ebpf.plugin
+
+if test "${build_target}" = "linux" -a "${enable_ebpf}" != "no"; then
+    PKG_CHECK_MODULES(
+        [LIBELF],
+        [libelf],
+        [have_libelf=yes],
+        [have_libelf=no]
+    )
+
+    AC_CHECK_TYPE(
+        [struct bpf_prog_info],
+        [have_bpf=yes],
+        [have_bpf=no],
+        [#include <linux/bpf.h>]
+    )
+
+    AC_CHECK_FILE(
+        externaldeps/libbpf/libbpf.a,
+        [have_libbpf=yes],
+        [have_libbpf=no]
+    )
+
+    AC_MSG_CHECKING([if ebpf.plugin should be enabled])
+    if test "${have_libelf}" = "yes" -a \
+            "${have_bpf}" = "yes" -a \
+            "${have_libbpf}" = "yes"; then
+        OPTIONAL_BPF_CFLAGS="${LIBELF_CFLAGS} -I externaldeps/libbpf/include"
+        OPTIONAL_BPF_LIBS="externaldeps/libbpf/libbpf.a ${LIBELF_LIBS}"
+        AC_DEFINE([HAVE_LIBBPF], [1], [libbpf usability])
+        enable_ebpf="yes"
+    else
+        enable_ebpf="no"
+    fi
+else
+    enable_ebpf="no"
+fi
+AC_MSG_RESULT([${enable_ebpf}])
+AM_CONDITIONAL([ENABLE_PLUGIN_EBPF], [test "${enable_ebpf}" = "yes"])
+
+# -----------------------------------------------------------------------------
+# slabinfo.plugin
+
+AC_MSG_CHECKING([if slabinfo.plugin should be enabled])
+if test "${build_target}" == "linux"; then
+    AC_DEFINE([ENABLE_SLABINFO], [1], [slabinfo plugin])
+    enable_plugin_slabinfo="yes"
+else
+    enable_plugin_slabinfo="no"
+fi
+AC_MSG_RESULT([${enable_plugin_slabinfo}])
+AM_CONDITIONAL([ENABLE_PLUGIN_SLABINFO], [test "${enable_plugin_slabinfo}" = "yes"])
+
+
+# -----------------------------------------------------------------------------
+# AWS Kinesis backend - libaws-cpp-sdk-kinesis, libaws-cpp-sdk-core, libssl, libcrypto, libcurl
+
+PKG_CHECK_MODULES(
+    [LIBCRYPTO],
+    [libcrypto],
+    [AC_CHECK_LIB(
+        [crypto],
+        [CRYPTO_new_ex_data],
+        [have_libcrypto=yes],
+        [have_libcrypto=no]
+    )],
+    [have_libcrypto=no]
+)
+
+PKG_CHECK_MODULES(
+    [LIBSSL],
+    [libssl],
+    [AC_CHECK_LIB(
+        [ssl],
+        [SSL_connect],
+        [have_libssl=yes],
+        [have_libssl=no]
+    )],
+    [have_libssl=no]
+)
+
+PKG_CHECK_MODULES(
+    [LIBCURL],
+    [libcurl],
+    [AC_CHECK_LIB(
+        [curl],
+        [curl_easy_init],
+        [have_libcurl=yes],
+        [have_libcurl=no]
+    )],
+    [have_libcurl=no]
+)
+
+PKG_CHECK_MODULES(
+    [AWS_CPP_SDK_CORE],
+    [aws-cpp-sdk-core],
+    [AC_CHECK_LIB(
+        [aws-cpp-sdk-core],
+        [cJSON_free],
+        [have_libaws_cpp_sdk_core=yes],
+        [have_libaws_cpp_sdk_core=no]
+    )],
+    [have_libaws_cpp_sdk_core=no]
+)
+
+PKG_CHECK_MODULES(
+    [AWS_CPP_SDK_KINESIS],
+    [aws-cpp-sdk-kinesis],
+    [have_libaws_cpp_sdk_kinesis=yes],
+    [have_libaws_cpp_sdk_kinesis=no]
+)
+
+AC_CHECK_LIB(
+    [aws-checksums],
+    [aws_checksums_crc32],
+    [have_libaws_checksums=yes],
+    [have_libaws_checksums=no]
+)
+
+AC_CHECK_LIB(
+    [aws-c-common],
+    [aws_default_allocator],
+    [have_libaws_c_common=yes],
+    [have_libaws_c_common=no]
+)
+
+AC_CHECK_LIB(
+    [aws-c-event-stream],
+    [aws_event_stream_library_init],
+    [have_libaws_c_event_stream=yes],
+    [have_libaws_c_event_stream=no]
+)
+
+test "${enable_backend_kinesis}" = "yes" -a "${have_libaws_cpp_sdk_kinesis}" != "yes" && \
+    AC_MSG_ERROR([libaws-cpp-sdk-kinesis required but not found. try installing AWS C++ SDK])
+
+test "${enable_backend_kinesis}" = "yes" -a "${have_libaws_cpp_sdk_core}" != "yes" && \
+    AC_MSG_ERROR([libaws-cpp-sdk-core required but not found. try installing AWS C++ SDK])
+
+test "${enable_backend_kinesis}" = "yes" -a "${have_libcurl}" != "yes" && \
+    AC_MSG_ERROR([libcurl required but not found])
+
+test "${enable_backend_kinesis}" = "yes" -a "${have_libssl}" != "yes" && \
+    AC_MSG_ERROR([libssl required but not found])
+
+test "${enable_backend_kinesis}" = "yes" -a "${have_libcrypto}" != "yes" && \
+    AC_MSG_ERROR([libcrypto required but not found])
+
+test "${enable_backend_kinesis}" = "yes" -a "${have_libaws_checksums}" != "yes" \
+                                         -a "${have_libaws_c_common}" != "yes" \
+                                         -a "${have_libaws_c_event_stream}" != "yes" && \
+    AC_MSG_ERROR([AWS SKD third party dependencies required but not found])
+
+AC_MSG_CHECKING([if kinesis backend should be enabled])
+if test "${enable_backend_kinesis}" != "no" -a "${have_libaws_cpp_sdk_kinesis}" = "yes" \
+                                            -a "${have_libaws_cpp_sdk_core}" = "yes" \
+                                            -a "${have_libaws_checksums}" = "yes" \
+                                            -a "${have_libaws_c_common}" = "yes" \
+                                            -a "${have_libaws_c_event_stream}" = "yes" \
+                                            -a "${have_libcurl}" = "yes" \
+                                            -a "${have_libssl}" = "yes" \
+                                            -a "${have_libcrypto}" = "yes"; then
+    enable_backend_kinesis="yes"
+    AC_DEFINE([HAVE_KINESIS], [1], [libaws-cpp-sdk-kinesis usability])
+    OPTIONAL_KINESIS_CFLAGS="${LIBCRYPTO_CFLAGS} ${LIBSSL_CFLAGS} ${LIBCURL_CFLAGS}"
+    CXX11FLAG="${AWS_CPP_SDK_KINESIS_CFLAGS} ${AWS_CPP_SDK_CORE_CFLAGS}"
+    OPTIONAL_KINESIS_LIBS="${AWS_CPP_SDK_KINESIS_LIBS} ${AWS_CPP_SDK_CORE_LIBS} \
+                           ${LIBCRYPTO_LIBS} ${LIBSSL_LIBS} ${LIBCURL_LIBS}"
+else
+    enable_backend_kinesis="no"
+fi
+
+AC_MSG_RESULT([${enable_backend_kinesis}])
+AM_CONDITIONAL([ENABLE_BACKEND_KINESIS], [test "${enable_backend_kinesis}" = "yes"])
+
+
+# -----------------------------------------------------------------------------
+# Pub/Sub exporting connector - googleapis
+
+PKG_CHECK_MODULES(
+    [GRPC],
+    [grpc],
+    [have_libgrpc=yes],
+    [have_libgrpc=no]
+)
+
+PKG_CHECK_MODULES(
+    [PUBSUB],
+    [googleapis_cpp_pubsub_protos],
+    [have_pubsub_protos=yes],
+    [have_pubsub_protos=no]
+)
+
+AC_PATH_PROG([CXX_BINARY], [${CXX}], [no])
+AS_IF(
+    [test x"${CXX_BINARY}" == x"no"],
+    [have_CXX_compiler=no],
+    [have_CXX_compiler=yes]
+)
+
+test "${enable_pubsub}" = "yes" -a "${have_grpc}" != "yes" && \
+    AC_MSG_ERROR([libgrpc required but not found. try installing grpc])
+
+test "${enable_pubsub}" = "yes" -a "${have_pubsub_protos}" != "yes" && \
+    AC_MSG_ERROR([libgoogleapis_cpp_pubsub_protos required but not found. try installing googleapis])
+
+test "${enable_backend_prometheus_remote_write}" = "yes" -a "${have_CXX_compiler}" != "yes" && \
+    AC_MSG_ERROR([C++ compiler required but not found. try installing g++])
+
+AC_MSG_CHECKING([if pubsub exporting connector should be enabled])
+if test "${enable_exporting_pubsub}" != "no" -a "${have_pubsub_protos}" = "yes" -a "${have_CXX_compiler}" = "yes"; then
+    enable_exporting_pubsub="yes"
+    AC_DEFINE([ENABLE_EXPORTING_PUBSUB], [1], [Pub/Sub API usability])
+    OPTIONAL_PUBSUB_CFLAGS="${GRPC_CFLAGS} ${PUBSUB_CFLAGS}"
+    CXX11FLAG="-std=c++11"
+    OPTIONAL_PUBSUB_LIBS="${GRPC_LIBS} ${PUBSUB_LIBS}"
+else
+    enable_pubsub="no"
+fi
+
+AC_MSG_RESULT([${enable_exporting_pubsub}])
+AM_CONDITIONAL([ENABLE_EXPORTING_PUBSUB], [test "${enable_exporting_pubsub}" = "yes"])
+
+
+# -----------------------------------------------------------------------------
+# Prometheus remote write backend - libprotobuf, libsnappy, protoc
+
+PKG_CHECK_MODULES(
+    [PROTOBUF],
+    [protobuf >= 3],
+    [have_libprotobuf=yes],
+    [have_libprotobuf=no]
+)
+
+AC_MSG_CHECKING([for snappy::RawCompress in -lsnappy])
+
+    AC_LANG_SAVE
+    AC_LANG_CPLUSPLUS
+    save_LIBS="${LIBS}"
+    LIBS="-lsnappy"
+    save_CXXFLAGS="${CXXFLAGS}"
+    CXXFLAGS="${CXXFLAGS} -std=c++11"
+
+    AC_TRY_LINK(
+        [
+            #include <stdlib.h>
+            #include <snappy.h>
+        ],
+        [
+            const char *input = "test";
+            size_t compressed_length;
+            char *buffer = (char *)malloc(5 * sizeof(char));
+            snappy::RawCompress(input, 4, buffer, &compressed_length);
+            free(buffer);
+        ],
+        [
+            have_libsnappy=yes
+            SNAPPY_CFLAGS=""
+            SNAPPY_LIBS="-lsnappy"
+        ],
+        [have_libsnappy=no]
+    )
+
+    LIBS="${save_LIBS}"
+    CXXFLAGS="${save_CXXFLAGS}"
+    AC_LANG_RESTORE
+
+AC_MSG_RESULT([${have_libsnappy}])
+
+AC_PATH_PROG([PROTOC], [protoc], [no])
+AS_IF(
+    [test x"${PROTOC}" == x"no"],
+    [have_protoc=no],
+    [have_protoc=yes]
+)
+
+AC_PATH_PROG([CXX_BINARY], [${CXX}], [no])
+AS_IF(
+    [test x"${CXX_BINARY}" == x"no"],
+    [have_CXX_compiler=no],
+    [have_CXX_compiler=yes]
+)
+
+test "${enable_backend_prometheus_remote_write}" = "yes" -a "${have_libprotobuf}" != "yes" && \
+    AC_MSG_ERROR([libprotobuf required but not found. try installing protobuf])
+
+test "${enable_backend_prometheus_remote_write}" = "yes" -a "${have_libsnappy}" != "yes" && \
+    AC_MSG_ERROR([libsnappy required but not found. try installing snappy])
+
+test "${enable_backend_prometheus_remote_write}" = "yes" -a "${have_protoc}" != "yes" && \
+    AC_MSG_ERROR([protoc compiler required but not found. try installing protobuf])
+
+test "${enable_backend_prometheus_remote_write}" = "yes" -a "${have_CXX_compiler}" != "yes" && \
+    AC_MSG_ERROR([C++ compiler required but not found. try installing g++])
+
+AC_MSG_CHECKING([if prometheus remote write backend should be enabled])
+if test "${enable_backend_prometheus_remote_write}" != "no" -a "${have_libprotobuf}" = "yes" -a "${have_libsnappy}" = "yes" \
+                                                           -a "${have_protoc}" = "yes" -a "${have_CXX_compiler}" = "yes"; then
+    enable_backend_prometheus_remote_write="yes"
+    AC_DEFINE([ENABLE_PROMETHEUS_REMOTE_WRITE], [1], [Prometheus remote write API usability])
+    OPTIONAL_PROMETHEUS_REMOTE_WRITE_CFLAGS="${PROTOBUF_CFLAGS} ${SNAPPY_CFLAGS} -Iexporting/prometheus/remote_write"
+    CXX11FLAG="-std=c++11"
+    OPTIONAL_PROMETHEUS_REMOTE_WRITE_LIBS="${PROTOBUF_LIBS} ${SNAPPY_LIBS}"
+else
+    enable_backend_prometheus_remote_write="no"
+fi
+
+AC_MSG_RESULT([${enable_backend_prometheus_remote_write}])
+AM_CONDITIONAL([ENABLE_BACKEND_PROMETHEUS_REMOTE_WRITE], [test "${enable_backend_prometheus_remote_write}" = "yes"])
+
+
+# -----------------------------------------------------------------------------
+# MongoDB backend - libmongoc
+
+PKG_CHECK_MODULES(
+    [LIBMONGOC],
+    [libmongoc-1.0 >= 1.7],
+    [have_libmongoc=yes],
+    [have_libmongoc=no]
+)
+
+test "${enable_backend_mongodb}" = "yes" -a "${have_libmongoc}" != "yes" && \
+    AC_MSG_ERROR([libmongoc required but not found. Try installing `mongoc`.])
+
+AC_MSG_CHECKING([if mongodb backend should be enabled])
+if test "${enable_backend_mongodb}" != "no" -a "${have_libmongoc}" = "yes"; then
+    enable_backend_mongodb="yes"
+    AC_DEFINE([HAVE_MONGOC], [1], [libmongoc usability])
+    OPTIONAL_MONGOC_CFLAGS="${LIBMONGOC_CFLAGS}"
+    OPTIONAL_MONGOC_LIBS="${LIBMONGOC_LIBS}"
+else
+    enable_backend_mongodb="no"
+fi
+
+AC_MSG_RESULT([${enable_backend_mongodb}])
+AM_CONDITIONAL([ENABLE_BACKEND_MONGODB], [test "${enable_backend_mongodb}" = "yes"])
 
 
 # -----------------------------------------------------------------------------
@@ -600,7 +1402,7 @@ if test "${enable_lto}" != "no"; then
 fi
 if test "${have_lto}" = "yes"; then
     oCFLAGS="${CFLAGS}"
-    CFLAGS="${CFLAGS} -flto ${OPTIONAL_MATH_CLFAGS} ${OPTIONAL_NFACCT_CLFAGS} ${OPTIONAL_ZLIB_CLFAGS} ${OPTIONAL_UUID_CLFAGS} ${OPTIONAL_LIBCAP_CFLAGS} ${OPTIONAL_IPMIMONITORING_CFLAGS} ${OPTIONAL_CUPS_CLFAGS} ${OPTIONAL_XENSTAT_FLAGS}"
+    CFLAGS="${CFLAGS} -flto"
     ac_cv_c_lto_cross_compile="${enable_lto}"
     test "${ac_cv_c_lto_cross_compile}" != "yes" && ac_cv_c_lto_cross_compile="no"
     AC_C_LTO
@@ -620,6 +1422,10 @@ AC_MSG_RESULT([${enable_lto}])
 
 
 # -----------------------------------------------------------------------------
+
+AM_CONDITIONAL([ENABLE_CXX_LINKER], [test "${enable_backend_kinesis}" = "yes" \
+                                     -o "${enable_exporting_pubsub}" = "yes" \
+                                     -o "${enable_backend_prometheus_remote_write}" = "yes"])
 
 AC_DEFINE_UNQUOTED([NETDATA_USER], ["${with_user}"], [use this user to drop privileged])
 
@@ -647,6 +1453,14 @@ AC_SUBST([logdir])
 AC_SUBST([pluginsdir])
 AC_SUBST([webdir])
 
+CFLAGS="${CFLAGS} ${OPTIONAL_MATH_CFLAGS} ${OPTIONAL_NFACCT_CFLAGS} ${OPTIONAL_ZLIB_CFLAGS} ${OPTIONAL_UUID_CFLAGS} \
+    ${OPTIONAL_LIBCAP_CFLAGS} ${OPTIONAL_IPMIMONITORING_CFLAGS} ${OPTIONAL_CUPS_CFLAGS} ${OPTIONAL_XENSTAT_FLAGS} \
+    ${OPTIONAL_KINESIS_CFLAGS} ${OPTIONAL_PUBSUB_CFLAGS} ${OPTIONAL_PROMETHEUS_REMOTE_WRITE_CFLAGS} \
+    ${OPTIONAL_MONGOC_CFLAGS} ${LWS_CFLAGS} ${OPTIONAL_JSONC_STATIC_CFLAGS} ${OPTIONAL_BPF_CFLAGS} ${OPTIONAL_JUDY_CFLAGS} \
+    ${OPTIONAL_MQTT_WSS_CFLAGS}"
+
+CXXFLAGS="${CFLAGS} ${CXX11FLAG}"
+
 CPPFLAGS="\
     -DTARGET_OS=${build_target_id} \
 	-DVARLIB_DIR=\"\\\"${varlibdir}\\\"\" \
@@ -659,14 +1473,23 @@ CPPFLAGS="\
 	-DWEB_DIR=\"\\\"${webdir}\\\"\" \
 "
 
-AC_SUBST([OPTIONAL_MATH_CLFAGS])
+AC_SUBST([OPTIONAL_MATH_CFLAGS])
 AC_SUBST([OPTIONAL_MATH_LIBS])
-AC_SUBST([OPTIONAL_NFACCT_CLFAGS])
+AC_SUBST([OPTIONAL_UV_LIBS])
+AC_SUBST([OPTIONAL_LZ4_LIBS])
+AC_SUBST([OPTIONAL_JUDY_CFLAGS])
+AC_SUBST([OPTIONAL_JUDY_LIBS])
+AC_SUBST([OPTIONAL_SSL_LIBS])
+AC_SUBST([OPTIONAL_JSONC_LIBS])
+AC_SUBST([OPTIONAL_NFACCT_CFLAGS])
 AC_SUBST([OPTIONAL_NFACCT_LIBS])
-AC_SUBST([OPTIONAL_ZLIB_CLFAGS])
+AC_SUBST([OPTIONAL_ZLIB_CFLAGS])
 AC_SUBST([OPTIONAL_ZLIB_LIBS])
-AC_SUBST([OPTIONAL_UUID_CLFAGS])
+AC_SUBST([OPTIONAL_UUID_CFLAGS])
 AC_SUBST([OPTIONAL_UUID_LIBS])
+AC_SUBST([OPTIONAL_BPF_CFLAGS])
+AC_SUBST([OPTIONAL_BPF_LIBS])
+AC_SUBST([OPTIONAL_MQTT_LIBS])
 AC_SUBST([OPTIONAL_LIBCAP_CFLAGS])
 AC_SUBST([OPTIONAL_LIBCAP_LIBS])
 AC_SUBST([OPTIONAL_IPMIMONITORING_CFLAGS])
@@ -675,7 +1498,51 @@ AC_SUBST([OPTIONAL_CUPS_CFLAGS])
 AC_SUBST([OPTIONAL_CUPS_LIBS])
 AC_SUBST([OPTIONAL_XENSTAT_CFLAGS])
 AC_SUBST([OPTIONAL_XENSTAT_LIBS])
+AC_SUBST([OPTIONAL_KINESIS_CFLAGS])
+AC_SUBST([OPTIONAL_KINESIS_LIBS])
+AC_SUBST([OPTIONAL_PUBSUB_CFLAGS])
+AC_SUBST([OPTIONAL_PUBSUB_LIBS])
+AC_SUBST([OPTIONAL_PROMETHEUS_REMOTE_WRITE_CFLAGS])
+AC_SUBST([OPTIONAL_PROMETHEUS_REMOTE_WRITE_LIBS])
+AC_SUBST([OPTIONAL_MONGOC_CFLAGS])
+AC_SUBST([OPTIONAL_MONGOC_LIBS])
+AC_SUBST([OPTIONAL_LWS_LIBS])
+AC_SUBST([OPTIONAL_MQTT_WSS_CFLAGS])
 
+# -----------------------------------------------------------------------------
+# Check if cmocka is available - needed for unit testing
+
+AC_ARG_ENABLE(
+     [unit-tests],
+     [AS_HELP_STRING([--disable-unit-tests],
+                     [Disables building and running the unit tests suite])],
+     [],
+     [enable_unit_tests="yes"]
+)
+
+
+PKG_CHECK_MODULES(
+    [CMOCKA],
+    [cmocka],
+    [have_cmocka="yes"],
+    [AC_MSG_NOTICE([CMocka not found on the system. Unit tests disabled])]
+)
+AM_CONDITIONAL([ENABLE_UNITTESTS], [test "${enable_unit_tests}" = "yes" -a "${have_cmocka}" = "yes" ])
+AC_SUBST([ENABLE_UNITTESTS])
+
+TEST_CFLAGS="${CFLAGS} ${CMOCKA_CFLAGS}"
+TEST_LIBS="${CMOCKA_LIBS}"
+
+AC_SUBST([TEST_CFLAGS])
+AC_SUBST([TEST_LIBS])
+
+# -----------------------------------------------------------------------------
+# save configure options for build info
+AC_DEFINE_UNQUOTED(
+    [CONFIGURE_COMMAND],
+    ["$ac_configure_args"],
+    [options passed to configure script]
+)
 
 AC_CONFIG_FILES([
     Makefile
@@ -685,6 +1552,9 @@ AC_CONFIG_FILES([
     backends/Makefile
     backends/opentsdb/Makefile
     backends/prometheus/Makefile
+    backends/prometheus/remote_write/Makefile
+    backends/aws_kinesis/Makefile
+    backends/mongodb/Makefile
     collectors/Makefile
     collectors/apps.plugin/Makefile
     collectors/cgroups.plugin/Makefile
@@ -692,6 +1562,7 @@ AC_CONFIG_FILES([
     collectors/checks.plugin/Makefile
     collectors/diskspace.plugin/Makefile
     collectors/fping.plugin/Makefile
+    collectors/ioping.plugin/Makefile
     collectors/freebsd.plugin/Makefile
     collectors/freeipmi.plugin/Makefile
     collectors/cups.plugin/Makefile
@@ -702,21 +1573,38 @@ AC_CONFIG_FILES([
     collectors/plugins.d/Makefile
     collectors/proc.plugin/Makefile
     collectors/python.d.plugin/Makefile
+    collectors/slabinfo.plugin/Makefile
     collectors/statsd.plugin/Makefile
+    collectors/ebpf.plugin/Makefile
     collectors/tc.plugin/Makefile
     collectors/xenstat.plugin/Makefile
+    collectors/perf.plugin/Makefile
     daemon/Makefile
     database/Makefile
+    database/engine/Makefile
+    database/engine/metadata_log/Makefile
     diagrams/Makefile
+    exporting/Makefile
+    exporting/graphite/Makefile
+    exporting/json/Makefile
+    exporting/opentsdb/Makefile
+    exporting/prometheus/Makefile
+    exporting/prometheus/remote_write/Makefile
+    exporting/aws_kinesis/Makefile
+    exporting/pubsub/Makefile
+    exporting/mongodb/Makefile
+    exporting/tests/Makefile
     health/Makefile
     health/notifications/Makefile
     libnetdata/Makefile
+    libnetdata/tests/Makefile
     libnetdata/adaptive_resortable_list/Makefile
     libnetdata/avl/Makefile
     libnetdata/buffer/Makefile
     libnetdata/clocks/Makefile
     libnetdata/config/Makefile
     libnetdata/dictionary/Makefile
+    libnetdata/ebpf/Makefile
     libnetdata/eval/Makefile
     libnetdata/locks/Makefile
     libnetdata/log/Makefile
@@ -726,8 +1614,11 @@ AC_CONFIG_FILES([
     libnetdata/socket/Makefile
     libnetdata/statistical/Makefile
     libnetdata/storage_number/Makefile
+    libnetdata/storage_number/tests/Makefile
     libnetdata/threads/Makefile
     libnetdata/url/Makefile
+    libnetdata/json/Makefile
+    libnetdata/health/Makefile
     registry/Makefile
     streaming/Makefile
     system/Makefile
@@ -757,7 +1648,12 @@ AC_CONFIG_FILES([
     web/gui/Makefile
     web/server/Makefile
     web/server/static/Makefile
+    claim/Makefile
+    aclk/legacy/Makefile
+    spawn/Makefile
+    parser/Makefile
 ])
+
 AC_OUTPUT
 
 test "${with_math}" != "yes" && AC_MSG_WARN([You are building without math. math allows accurate calculations. It should be enabled.]) || :

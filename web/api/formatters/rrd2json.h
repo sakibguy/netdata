@@ -16,6 +16,8 @@
 #include "web/api/formatters/charts2json.h"
 #include "web/api/formatters/json_wrapper.h"
 
+#include "web/server/web_client.h"
+
 #define HOSTNAME_MAX 1024
 
 #define API_RELATIVE_TIME_MAX (3 * 365 * 86400)
@@ -63,6 +65,8 @@ extern int rrdset2anything_api_v1(
         , long group_time
         , uint32_t options
         , time_t *latest_timestamp
+        , struct context_param *context_param_list
+        , char *chart_label_key
 );
 
 extern int rrdset2value_api_v1(
@@ -80,5 +84,9 @@ extern int rrdset2value_api_v1(
         , time_t *db_before
         , int *value_is_null
 );
+
+extern void build_context_param_list(struct context_param **param_list, RRDSET *st);
+extern void rebuild_context_param_list(struct context_param *context_param_list, time_t after_requested);
+extern void free_context_param_list(struct context_param **param_list);
 
 #endif /* NETDATA_RRD2JSON_H */

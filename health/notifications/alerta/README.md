@@ -1,3 +1,9 @@
+<!--
+title: "alerta.io"
+description: "Send alarm notifications to Alerta to see the latest health status updates from multiple nodes in a single interface."
+custom_edit_url: https://github.com/netdata/netdata/edit/master/health/notifications/alerta/README.md
+-->
+
 # alerta.io
 
 The [Alerta](https://alerta.io) monitoring system is a tool used to
@@ -23,10 +29,12 @@ The easiest way to install Alerta is to use the Docker image available
 on [Docker hub][1]. Alternatively, follow the ["getting started"][2]
 tutorial to deploy Alerta to an Ubuntu server. More advanced
 configurations are out os scope of this tutorial but information
-about different deployment scenaries can be found in the  [docs][3].
+about different deployment scenarios can be found in the  [docs][3].
 
 [1]: https://hub.docker.com/r/alerta/alerta-web/
+
 [2]: http://alerta.readthedocs.io/en/latest/gettingstarted/tutorial-1-deploy-alerta.html
+
 [3]: http://docs.alerta.io/en/latest/deployment.html
 
 ## Send alarms to Alerta
@@ -42,7 +50,9 @@ Step 2. configure Netdata to send alarms to Alerta
 
 On your system run:
 
-    $ /etc/netdata/edit-config health_alarm_notify.conf
+```sh
+/etc/netdata/edit-config health_alarm_notify.conf
+```
 
 and modify the file as below:
 
@@ -70,13 +80,15 @@ DEFAULT_RECIPIENT_ALERTA="Production"
 
 We can test alarms using the standard approach:
 
-    $ /opt/netdata/netdata-plugins/plugins.d/alarm-notify.sh test
+```sh
+/opt/netdata/netdata-plugins/plugins.d/alarm-notify.sh test
+```
 
 Note: Netdata will send 3 alarms, and because last alarm is "CLEAR"
 you will not see them in main Alerta page, you need to select to see
-"closed" alarma in top-right lookup. A little change in `alarm-notify.sh`
+"closed" alarm in top-right lookup. A little change in `alarm-notify.sh`
 that let us test each state one by one will be useful.
 
-For more information see [https://docs.alerta.io](https://docs.alerta.io)
+For more information see <https://docs.alerta.io>
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fhealth%2Fnotifications%2Falerta%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fhealth%2Fnotifications%2Falerta%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

@@ -5,7 +5,6 @@
 
 from bases.FrameworkServices.UrlService import UrlService
 
-
 ORDER = [
     'requests',
     'connections',
@@ -38,7 +37,7 @@ CHARTS = {
         ]},
     'bytespersec': {
         'options': [None, 'Lifetime Avg. Bandwidth/s', 'kilobits/s', 'statistics',
-                    'apache.bytesperreq', 'area'],
+                    'apache.bytespersec', 'area'],
         'lines': [
             ['size_sec', None, 'absolute', 8, 1000 * 100000]
         ]},

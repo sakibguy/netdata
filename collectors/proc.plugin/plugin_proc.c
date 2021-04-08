@@ -21,6 +21,9 @@ static struct proc_module {
         { .name = "/proc/loadavg", .dim = "loadavg", .func = do_proc_loadavg },
         { .name = "/proc/sys/kernel/random/entropy_avail", .dim = "entropy", .func = do_proc_sys_kernel_random_entropy_avail },
 
+        // pressure metrics
+        { .name = "/proc/pressure", .dim = "pressure", .func = do_proc_pressure },
+
         // CPU metrics
         { .name = "/proc/interrupts", .dim = "interrupts", .func = do_proc_interrupts },
         { .name = "/proc/softirqs", .dim = "softirqs", .func = do_proc_softirqs },
@@ -29,11 +32,14 @@ static struct proc_module {
         { .name = "/proc/vmstat", .dim = "vmstat", .func = do_proc_vmstat },
         { .name = "/proc/meminfo", .dim = "meminfo", .func = do_proc_meminfo },
         { .name = "/sys/kernel/mm/ksm", .dim = "ksm", .func = do_sys_kernel_mm_ksm },
+        { .name = "/sys/block/zram", .dim = "zram", .func = do_sys_block_zram },
         { .name = "/sys/devices/system/edac/mc", .dim = "ecc", .func = do_proc_sys_devices_system_edac_mc },
         { .name = "/sys/devices/system/node", .dim = "numa", .func = do_proc_sys_devices_system_node },
+        { .name = "/proc/pagetypeinfo", .dim = "pagetypeinfo", .func = do_proc_pagetypeinfo },
 
         // network metrics
         { .name = "/proc/net/dev", .dim = "netdev", .func = do_proc_net_dev },
+        { .name = "/proc/net/wireless", .dim = "netwireless", .func = do_proc_net_wireless },
         { .name = "/proc/net/sockstat", .dim = "sockstat", .func = do_proc_net_sockstat },
         { .name = "/proc/net/sockstat6", .dim = "sockstat6", .func = do_proc_net_sockstat6 },
         { .name = "/proc/net/netstat", .dim = "netstat", .func = do_proc_net_netstat }, // this has to be before /proc/net/snmp, because there is a shared metric
@@ -42,6 +48,7 @@ static struct proc_module {
         { .name = "/proc/net/sctp/snmp", .dim = "sctp", .func = do_proc_net_sctp_snmp },
         { .name = "/proc/net/softnet_stat", .dim = "softnet", .func = do_proc_net_softnet_stat },
         { .name = "/proc/net/ip_vs/stats", .dim = "ipvs", .func = do_proc_net_ip_vs_stats },
+        { .name = "/sys/class/infiniband",   .dim = "infiniband", .func = do_sys_class_infiniband },
 
         // firewall metrics
         { .name = "/proc/net/stat/conntrack", .dim = "conntrack", .func = do_proc_net_stat_conntrack },
@@ -83,14 +90,16 @@ static void proc_main_cleanup(void *ptr) {
 void *proc_main(void *ptr) {
     netdata_thread_cleanup_push(proc_main_cleanup, ptr);
 
-    int vdo_cpu_netdata = config_get_boolean("plugin:proc", "netdata server resources", 1);
+    int vdo_cpu_netdata = config_get_boolean("plugin:proc", "netdata server resources", CONFIG_BOOLEAN_YES);
+
+    config_get_boolean("plugin:proc", "/proc/pagetypeinfo", CONFIG_BOOLEAN_NO);
 
     // check the enabled status for each module
     int i;
     for(i = 0 ; proc_modules[i].name ;i++) {
         struct proc_module *pm = &proc_modules[i];
 
-        pm->enabled = config_get_boolean("plugin:proc", pm->name, 1);
+        pm->enabled = config_get_boolean("plugin:proc", pm->name, CONFIG_BOOLEAN_YES);
         pm->duration = 0ULL;
         pm->rd = NULL;
     }
@@ -141,7 +150,7 @@ void *proc_main(void *ptr) {
             static RRDSET *st = NULL;
 
             if(unlikely(!st)) {
-                st = rrdset_find_bytype_localhost("netdata", "plugin_proc_modules");
+                st = rrdset_find_active_bytype_localhost("netdata", "plugin_proc_modules");
 
                 if(!st) {
                     st = rrdset_create_localhost(

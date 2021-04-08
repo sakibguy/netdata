@@ -1,45 +1,52 @@
-# smartd_log
+<!--
+title: "Storage devices monitoring with Netdata"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/smartd_log/README.md
+sidebar_label: "S.M.A.R.T. attributes"
+-->
 
-Module monitor `smartd` log files to collect HDD/SSD S.M.A.R.T attributes.
+# Storage devices monitoring with Netdata
 
-**Requirements:**
-* `smartmontools`
+Monitors `smartd` log files to collect HDD/SSD S.M.A.R.T attributes.
+
+## Requirements
+
+-   `smartmontools`
 
 It produces following charts for SCSI devices:
 
-1. **Read Error Corrected**
+1.  **Read Error Corrected**
 
-2. **Read Error Uncorrected**
+2.  **Read Error Uncorrected**
 
-3. **Write Error Corrected**
+3.  **Write Error Corrected**
 
-4. **Write Error Uncorrected**
+4.  **Write Error Uncorrected**
 
-5. **Verify Error Corrected**
+5.  **Verify Error Corrected**
 
-6. **Verify Error Uncorrected**
+6.  **Verify Error Uncorrected**
 
-7. **Temperature**
-
+7.  **Temperature**
 
 For ATA devices:
-1. **Read Error Rate**
 
-2. **Seek Error Rate**
+1.  **Read Error Rate**
 
-3. **Soft Read Error Rate**
+2.  **Seek Error Rate**
 
-4. **Write Error Rate**
+3.  **Soft Read Error Rate**
 
-5. **SATA Interface Downshift**
+4.  **Write Error Rate**
 
-6. **UDMA CRC Error Count**
+5.  **SATA Interface Downshift**
 
-7. **Throughput Performance**
+6.  **UDMA CRC Error Count**
 
-8. **Seek Time Performance**
+7.  **Throughput Performance**
 
-9. **Start/Stop Count**
+8.  **Seek Time Performance**
+
+9.  **Start/Stop Count**
 
 10. **Power-On Hours Count**
 
@@ -75,21 +82,36 @@ For ATA devices:
 
 26. **Percent Lifetime Used**
 
-### prerequisite
+## prerequisite
+
 `smartd` must be running with `-A` option to write smartd attribute information to files.
 
 For this you need to set `smartd_opts` (or `SMARTD_ARGS`, check _smartd.service_ content) in `/etc/default/smartmontools`:
-
 
 ```
 # dump smartd attrs info every 600 seconds
 smartd_opts="-A /var/log/smartd/ -i 600"
 ```
 
+You may need to create the smartd directory before smartd will write to it: 
+
+```sh
+mkdir -p /var/log/smartd
+```
+
+Otherwise, all the smartd `.csv` files may get written to `/var/lib/smartmontools` (default location). See also <https://linux.die.net/man/8/smartd> for more info on the `-A --attributelog=PREFIX` command.
 
 `smartd` appends logs at every run. It's strongly recommended to use `logrotate` for smartd files.
 
-### configuration
+## Configuration
+
+Edit the `python.d/smartd_log.conf` configuration file using `edit-config` from the Netdata [config
+directory](/docs/configure/nodes.md), which is typically at `/etc/netdata`.
+
+```bash
+cd /etc/netdata   # Replace this path with your Netdata config directory, if different
+sudo ./edit-config python.d/smartd_log.conf
+```
 
 ```yaml
 local:
@@ -100,4 +122,4 @@ If no configuration is given, module will attempt to read log files in `/var/log
 
 ---
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Fpython.d.plugin%2Fsmartd_log%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Fpython.d.plugin%2Fsmartd_log%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

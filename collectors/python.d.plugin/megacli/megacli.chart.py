@@ -9,7 +9,6 @@ import re
 from bases.FrameworkServices.ExecutableService import ExecutableService
 from bases.collection import find_binary
 
-
 disabled_by_default = True
 
 update_every = 5
@@ -27,7 +26,7 @@ def adapter_charts(ads):
         'adapter_degraded': {
             'options': [None, 'Adapter State', 'is degraded', 'adapter', 'megacli.adapter_degraded', 'line'],
             'lines': dims(ads)
-            },
+        },
     }
 
     return order, charts
@@ -111,7 +110,7 @@ def find_adapters(d):
 
 
 def find_pds(d):
-    keys = ('Slot Number',  'Media Error Count', 'Predictive Failure Count')
+    keys = ('Slot Number', 'Media Error Count', 'Predictive Failure Count')
     d = ' '.join(v.strip() for v in d if v.startswith(keys))
     return [PD(*v) for v in RE_VD.findall(d)]
 
@@ -163,8 +162,8 @@ class Battery:
 class Megacli:
     def __init__(self):
         self.s = find_binary('sudo')
-        self.m = find_binary('megacli')
-        self.sudo_check = [self.s, '-n', '-v']
+        self.m = find_binary('megacli') or find_binary('MegaCli')  # Binary on FreeBSD is MegaCli
+        self.sudo_check = [self.s, '-n', '-l']
         self.disk_info = [self.s, '-n', self.m, '-LDPDInfo', '-aAll', '-NoLog']
         self.battery_info = [self.s, '-n', self.m, '-AdpBbuCmd', '-a0', '-NoLog']
 

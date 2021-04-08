@@ -89,7 +89,7 @@ int do_sys_kernel_mm_ksm(int update_every, usec_t dt) {
     offered = pages_sharing + pages_shared + pages_unshared + pages_volatile;
     saved = pages_sharing;
 
-    if(unlikely(!offered /*|| !pages_to_scan*/)) return 0;
+    if(unlikely(!offered /*|| !pages_to_scan*/ && netdata_zero_metrics_enabled == CONFIG_BOOLEAN_NO)) return 0;
 
     // --------------------------------------------------------------------
 
@@ -110,7 +110,7 @@ int do_sys_kernel_mm_ksm(int update_every, usec_t dt) {
                     , PLUGIN_PROC_MODULE_KSM_NAME
                     , NETDATA_CHART_PRIO_MEM_KSM
                     , update_every
-                    , RRDSET_TYPE_AREA
+                    , RRDSET_TYPE_STACKED
             );
 
             rd_shared   = rrddim_add(st_mem_ksm, "shared",   NULL,      1, 1024 * 1024, RRD_ALGORITHM_ABSOLUTE);
@@ -192,7 +192,7 @@ int do_sys_kernel_mm_ksm(int update_every, usec_t dt) {
         else
             rrdset_next(st_mem_ksm_ratios);
 
-        rrddim_set_by_pointer(st_mem_ksm_ratios, rd_savings, (saved * 1000000) / offered);
+        rrddim_set_by_pointer(st_mem_ksm_ratios, rd_savings, offered ? (saved * 1000000) / offered : 0);
 
         rrdset_done(st_mem_ksm_ratios);
     }

@@ -55,11 +55,18 @@ class RuntimeCounters:
             self.penalty = round(min(self.retries * self.update_every / 2, MAX_PENALTY))
 
 
+def clean_module_name(name):
+    if name.startswith('pythond_'):
+        return name[8:]
+    return name
+
+
 class SimpleService(PythonDLimitedLogger, object):
     """
     Prototype of Service class.
     Implemented basic functionality to run jobs by `python.d.plugin`
     """
+
     def __init__(self, configuration, name=''):
         """
         :param configuration: <dict>
@@ -70,7 +77,7 @@ class SimpleService(PythonDLimitedLogger, object):
         self.order = list()
         self.definitions = dict()
 
-        self.module_name = self.__module__
+        self.module_name = clean_module_name(self.__module__)
         self.job_name = configuration.pop('job_name')
         self.override_name = configuration.pop('override_name')
         self.fake_name = None
@@ -230,7 +237,7 @@ class SimpleService(PythonDLimitedLogger, object):
                     continue
             elif self.charts.cleanup and chart.penalty >= self.charts.cleanup:
                 chart.obsolete()
-                self.error("chart '{0}' was suppressed due to non updating".format(chart.name))
+                self.info("chart '{0}' was suppressed due to non updating".format(chart.name))
                 continue
 
             ok = chart.update(data, interval)

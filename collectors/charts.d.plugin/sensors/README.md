@@ -1,10 +1,14 @@
-# sensors
+<!--
+title: "Linux machine sensors monitoring with Netdata"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/charts.d.plugin/sensors/README.md
+-->
+
+# Linux machine sensors monitoring with Netdata
 
 > THIS MODULE IS OBSOLETE.
-> USE [THE PYTHON ONE](../../python.d.plugin/sensors) - IT SUPPORTS MULTIPLE JOBS AND IT IS MORE EFFICIENT
-
+> USE [THE PYTHON ONE](/collectors/python.d.plugin/sensors) - IT SUPPORTS MULTIPLE JOBS AND IT IS MORE EFFICIENT
+>
 > Unlike the python one, this module can collect temperature on RPi.
-
 
 The plugin will provide charts for all configured system sensors
 
@@ -13,21 +17,29 @@ The plugin will provide charts for all configured system sensors
 > kernel provided values, this plugin will not perform.
 > So, the values graphed, are the raw hardware values of the sensors.
 
-The plugin will create netdata charts for:
+The plugin will create Netdata charts for:
 
-1. **Temperature**
-2. **Voltage**
-3. **Current**
-4. **Power**
-5. **Fans Speed**
-6. **Energy**
-7. **Humidity**
+1.  **Temperature**
+2.  **Voltage**
+3.  **Current**
+4.  **Power**
+5.  **Fans Speed**
+6.  **Energy**
+7.  **Humidity**
 
 One chart for every sensor chip found and each of the above will be created.
 
-### configuration
+## Configuration
 
-This is the internal default for `/etc/netdata/sensors.conf`
+Edit the `charts.d/sensors.conf` configuration file using `edit-config` from the Netdata [config
+directory](/docs/configure/nodes.md), which is typically at `/etc/netdata`.
+
+```bash
+cd /etc/netdata   # Replace this path with your Netdata config directory, if different
+sudo ./edit-config charts.d/sensors.conf
+```
+
+This is the internal default for `charts.d/sensors.conf`
 
 ```sh
 # the directory the kernel keeps sensor data
@@ -52,4 +64,4 @@ sensors_excluded=()
 
 ---
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Fcharts.d.plugin%2Fsensors%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Fcharts.d.plugin%2Fsensors%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

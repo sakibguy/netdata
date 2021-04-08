@@ -3,6 +3,7 @@
 #include "../libnetdata.h"
 
 static int clock_boottime_valid = 1;
+static int clock_monotonic_coarse_valid = 1;
 
 #ifndef HAVE_CLOCK_GETTIME
 inline int clock_gettime(clockid_t clk_id, struct timespec *ts) {
@@ -21,6 +22,12 @@ void test_clock_boottime(void) {
     struct timespec ts;
     if(clock_gettime(CLOCK_BOOTTIME, &ts) == -1 && errno == EINVAL)
         clock_boottime_valid = 0;
+}
+
+void test_clock_monotonic_coarse(void) {
+    struct timespec ts;
+    if(clock_gettime(CLOCK_MONOTONIC_COARSE, &ts) == -1 && errno == EINVAL)
+        clock_monotonic_coarse_valid = 0;
 }
 
 static inline time_t now_sec(clockid_t clk_id) {
@@ -69,27 +76,43 @@ inline int now_realtime_timeval(struct timeval *tv) {
 }
 
 inline time_t now_monotonic_sec(void) {
-    return now_sec(CLOCK_MONOTONIC);
+    return now_sec(likely(clock_monotonic_coarse_valid) ? CLOCK_MONOTONIC_COARSE : CLOCK_MONOTONIC);
 }
 
 inline usec_t now_monotonic_usec(void) {
-    return now_usec(CLOCK_MONOTONIC);
+    return now_usec(likely(clock_monotonic_coarse_valid) ? CLOCK_MONOTONIC_COARSE : CLOCK_MONOTONIC);
 }
 
 inline int now_monotonic_timeval(struct timeval *tv) {
+    return now_timeval(likely(clock_monotonic_coarse_valid) ? CLOCK_MONOTONIC_COARSE : CLOCK_MONOTONIC, tv);
+}
+
+inline time_t now_monotonic_high_precision_sec(void) {
+    return now_sec(CLOCK_MONOTONIC);
+}
+
+inline usec_t now_monotonic_high_precision_usec(void) {
+    return now_usec(CLOCK_MONOTONIC);
+}
+
+inline int now_monotonic_high_precision_timeval(struct timeval *tv) {
     return now_timeval(CLOCK_MONOTONIC, tv);
 }
 
 inline time_t now_boottime_sec(void) {
-    return now_sec(likely(clock_boottime_valid) ? CLOCK_BOOTTIME : CLOCK_MONOTONIC);
+    return now_sec(likely(clock_boottime_valid) ? CLOCK_BOOTTIME :
+                   likely(clock_monotonic_coarse_valid) ? CLOCK_MONOTONIC_COARSE : CLOCK_MONOTONIC);
 }
 
 inline usec_t now_boottime_usec(void) {
-    return now_usec(likely(clock_boottime_valid) ? CLOCK_BOOTTIME : CLOCK_MONOTONIC);
+    return now_usec(likely(clock_boottime_valid) ? CLOCK_BOOTTIME :
+                    likely(clock_monotonic_coarse_valid) ? CLOCK_MONOTONIC_COARSE : CLOCK_MONOTONIC);
 }
 
 inline int now_boottime_timeval(struct timeval *tv) {
-    return now_timeval(likely(clock_boottime_valid) ? CLOCK_BOOTTIME : CLOCK_MONOTONIC, tv);
+    return now_timeval(likely(clock_boottime_valid) ? CLOCK_BOOTTIME :
+                       likely(clock_monotonic_coarse_valid) ? CLOCK_MONOTONIC_COARSE : CLOCK_MONOTONIC,
+                       tv);
 }
 
 inline usec_t timeval_usec(struct timeval *tv) {
@@ -209,4 +232,69 @@ int sleep_usec(usec_t usec) {
 
     return ret;
 #endif
+}
+
+static inline collected_number uptime_from_boottime(void) {
+#ifdef CLOCK_BOOTTIME_IS_AVAILABLE
+    return now_boottime_usec() / 1000;
+#else
+    error("uptime cannot be read from CLOCK_BOOTTIME on this system.");
+    return 0;
+#endif
+}
+
+static procfile *read_proc_uptime_ff = NULL;
+static inline collected_number read_proc_uptime(char *filename) {
+    if(unlikely(!read_proc_uptime_ff)) {
+        read_proc_uptime_ff = procfile_open(filename, " \t", PROCFILE_FLAG_DEFAULT);
+        if(unlikely(!read_proc_uptime_ff)) return 0;
+    }
+
+    read_proc_uptime_ff = procfile_readall(read_proc_uptime_ff);
+    if(unlikely(!read_proc_uptime_ff)) return 0;
+
+    if(unlikely(procfile_lines(read_proc_uptime_ff) < 1)) {
+        error("/proc/uptime has no lines.");
+        return 0;
+    }
+    if(unlikely(procfile_linewords(read_proc_uptime_ff, 0) < 1)) {
+        error("/proc/uptime has less than 1 word in it.");
+        return 0;
+    }
+
+    return (collected_number)(strtold(procfile_lineword(read_proc_uptime_ff, 0, 0), NULL) * 1000.0);
+}
+
+inline collected_number uptime_msec(char *filename){
+    static int use_boottime = -1;
+
+    if(unlikely(use_boottime == -1)) {
+        collected_number uptime_boottime = uptime_from_boottime();
+        collected_number uptime_proc     = read_proc_uptime(filename);
+
+        long long delta = (long long)uptime_boottime - (long long)uptime_proc;
+        if(delta < 0) delta = -delta;
+
+        if(delta <= 1000 && uptime_boottime != 0) {
+            procfile_close(read_proc_uptime_ff);
+            info("Using now_boottime_usec() for uptime (dt is %lld ms)", delta);
+            use_boottime = 1;
+        }
+        else if(uptime_proc != 0) {
+            info("Using /proc/uptime for uptime (dt is %lld ms)", delta);
+            use_boottime = 0;
+        }
+        else {
+            error("Cannot find any way to read uptime on this system.");
+            return 1;
+        }
+    }
+
+    collected_number uptime;
+    if(use_boottime)
+        uptime = uptime_from_boottime();
+    else
+        uptime = read_proc_uptime(filename);
+
+    return uptime;
 }

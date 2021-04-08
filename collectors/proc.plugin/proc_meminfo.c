@@ -35,7 +35,7 @@ int do_proc_meminfo(int update_every, usec_t dt) {
             Writeback = 0,
             //AnonPages = 0,
             //Mapped = 0,
-            //Shmem = 0,
+            Shmem = 0,
             Slab = 0,
             SReclaimable = 0,
             SUnreclaim = 0,
@@ -92,7 +92,7 @@ int do_proc_meminfo(int update_every, usec_t dt) {
         arl_expect(arl_base, "Writeback", &Writeback);
         //arl_expect(arl_base, "AnonPages", &AnonPages);
         //arl_expect(arl_base, "Mapped", &Mapped);
-        //arl_expect(arl_base, "Shmem", &Shmem);
+        arl_expect(arl_base, "Shmem", &Shmem);
         arl_expect(arl_base, "Slab", &Slab);
         arl_expect(arl_base, "SReclaimable", &SReclaimable);
         arl_expect(arl_base, "SUnreclaim", &SUnreclaim);
@@ -145,8 +145,8 @@ int do_proc_meminfo(int update_every, usec_t dt) {
 
     // --------------------------------------------------------------------
 
-    // http://stackoverflow.com/questions/3019748/how-to-reliably-measure-available-memory-in-linux
-    unsigned long long MemCached = Cached + SReclaimable;
+    // http://calimeroteknik.free.fr/blag/?article20/really-used-memory-on-gnu-linux
+    unsigned long long MemCached = Cached + SReclaimable - Shmem;
     unsigned long long MemUsed = MemTotal - MemFree - MemCached - Buffers;
 
     if(do_ram) {
@@ -219,7 +219,9 @@ int do_proc_meminfo(int update_every, usec_t dt) {
 
     unsigned long long SwapUsed = SwapTotal - SwapFree;
 
-    if(do_swap == CONFIG_BOOLEAN_YES || SwapTotal || SwapUsed || SwapFree) {
+    if(do_swap == CONFIG_BOOLEAN_YES || (do_swap == CONFIG_BOOLEAN_AUTO &&
+                                         (SwapTotal || SwapUsed || SwapFree ||
+                                          netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         do_swap = CONFIG_BOOLEAN_YES;
 
         static RRDSET *st_system_swap = NULL;
@@ -256,7 +258,10 @@ int do_proc_meminfo(int update_every, usec_t dt) {
 
     // --------------------------------------------------------------------
 
-    if(arl_hwcorrupted->flags & ARL_ENTRY_FLAG_FOUND && (do_hwcorrupt == CONFIG_BOOLEAN_YES || (do_hwcorrupt == CONFIG_BOOLEAN_AUTO && HardwareCorrupted > 0))) {
+    if(arl_hwcorrupted->flags & ARL_ENTRY_FLAG_FOUND &&
+       (do_hwcorrupt == CONFIG_BOOLEAN_YES || (do_hwcorrupt == CONFIG_BOOLEAN_AUTO &&
+                                               (HardwareCorrupted > 0 ||
+                                                netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))) {
         do_hwcorrupt = CONFIG_BOOLEAN_YES;
 
         static RRDSET *st_mem_hwcorrupt = NULL;
@@ -438,7 +443,9 @@ int do_proc_meminfo(int update_every, usec_t dt) {
 
     // --------------------------------------------------------------------
 
-    if(do_hugepages == CONFIG_BOOLEAN_YES || (do_hugepages == CONFIG_BOOLEAN_AUTO && Hugepagesize != 0 && HugePages_Total != 0)) {
+    if(do_hugepages == CONFIG_BOOLEAN_YES || (do_hugepages == CONFIG_BOOLEAN_AUTO &&
+                                              ((Hugepagesize && HugePages_Total) ||
+                                               netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         do_hugepages = CONFIG_BOOLEAN_YES;
 
         static RRDSET *st_mem_hugepages = NULL;
@@ -479,7 +486,10 @@ int do_proc_meminfo(int update_every, usec_t dt) {
 
     // --------------------------------------------------------------------
 
-    if(do_transparent_hugepages == CONFIG_BOOLEAN_YES || (do_transparent_hugepages == CONFIG_BOOLEAN_AUTO && (AnonHugePages != 0 || ShmemHugePages != 0))) {
+    if(do_transparent_hugepages == CONFIG_BOOLEAN_YES || (do_transparent_hugepages == CONFIG_BOOLEAN_AUTO &&
+                                                          (AnonHugePages ||
+                                                           ShmemHugePages ||
+                                                           netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         do_transparent_hugepages = CONFIG_BOOLEAN_YES;
 
         static RRDSET *st_mem_transparent_hugepages = NULL;
@@ -516,4 +526,3 @@ int do_proc_meminfo(int update_every, usec_t dt) {
 
     return 0;
 }
-

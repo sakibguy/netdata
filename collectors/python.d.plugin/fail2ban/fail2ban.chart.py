@@ -3,14 +3,12 @@
 # Author: ilyam8
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import re
 import os
-
+import re
 from collections import defaultdict
 from glob import glob
 
 from bases.FrameworkServices.LogService import LogService
-
 
 ORDER = [
     'jails_bans',
@@ -25,13 +23,13 @@ def charts(jails):
 
     ch = {
         ORDER[0]: {
-                'options': [None, 'Jails Ban Rate', 'bans/s', 'bans', 'jail.bans', 'line'],
-                'lines': []
+            'options': [None, 'Jails Ban Rate', 'bans/s', 'bans', 'jail.bans', 'line'],
+            'lines': []
         },
         ORDER[1]: {
-                'options': [None, 'Banned IPs (since the last restart of netdata)', 'IPs', 'in jail',
-                            'jail.in_jail', 'line'],
-                'lines': []
+            'options': [None, 'Banned IPs (since the last restart of netdata)', 'IPs', 'in jail',
+                        'jail.in_jail', 'line'],
+            'lines': []
         },
     }
     for jail in jails:
@@ -52,7 +50,7 @@ def charts(jails):
     return ch
 
 
-RE_JAILS = re.compile(r'\[([a-zA-Z0-9_-]+)\][^\[\]]+?enabled\s+= (true|false)')
+RE_JAILS = re.compile(r'\[([a-zA-Z0-9_-]+)\][^\[\]]+?enabled\s+= +(true|yes|false|no)')
 
 # Example:
 # 2018-09-12 11:45:53,715 fail2ban.actions[25029]: WARNING [ssh] Unban 195.201.88.33
@@ -198,9 +196,9 @@ class Service(LogService):
             if name in exclude:
                 continue
 
-            if status == 'true' and name not in active_jails:
+            if status in ('true','yes') and name not in active_jails:
                 active_jails.append(name)
-            elif status == 'false' and name in active_jails:
+            elif status in ('false','no') and name in active_jails:
                 active_jails.remove(name)
 
         return active_jails or DEFAULT_JAILS

@@ -1,3 +1,8 @@
+<!--
+title: "freeipmi.plugin"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/freeipmi.plugin/README.md
+-->
+
 # freeipmi.plugin
 
 Netdata has a [freeipmi](https://www.gnu.org/software/freeipmi/) plugin.
@@ -6,32 +11,31 @@ Netdata has a [freeipmi](https://www.gnu.org/software/freeipmi/) plugin.
 
 ## Compile `freeipmi.plugin`
 
-1. install `libipmimonitoring-dev` or `libipmimonitoring-devel` (`freeipmi-devel` on RHEL based OS) using the package manager of your system.
+1.  install `libipmimonitoring-dev` or `libipmimonitoring-devel` (`freeipmi-devel` on RHEL based OS) using the package manager of your system.
 
-2. re-install netdata from source. The installer will detect that the required libraries are now available and will also build `freeipmi.plugin`.
+2.  re-install Netdata from source. The installer will detect that the required libraries are now available and will also build `freeipmi.plugin`.
 
 Keep in mind IPMI requires root access, so the plugin is setuid to root.
 
-If you just installed the required IPMI tools, please run at least once the command `ipmimonitoring` and verify it returns sensors information. This command initialises IPMI configuration, so that the netdata plugin will be able to work.
+If you just installed the required IPMI tools, please run at least once the command `ipmimonitoring` and verify it returns sensors information. This command initialises IPMI configuration, so that the Netdata plugin will be able to work.
 
 ## Netdata use
 
 The plugin creates (up to) 8 charts, based on the information collected from IPMI:
 
-1. number of sensors by state
-2. number of events in SEL
-3. Temperatures CELCIUS
-4. Temperatures FAHRENHEIT
-5. Voltages
-6. Currents
-7. Power
-8. Fans
-
+1.  number of sensors by state
+2.  number of events in SEL
+3.  Temperatures CELSIUS
+4.  Temperatures FAHRENHEIT
+5.  Voltages
+6.  Currents
+7.  Power
+8.  Fans
 
 It also adds 2 alarms:
 
-1. Sensors in non-nominal state (i.e. warning and critical)
-2. SEL is non empty
+1.  Sensors in non-nominal state (i.e. warning and critical)
+2.  SEL is non empty
 
 ![image](https://cloud.githubusercontent.com/assets/2662304/23674138/88926a20-037d-11e7-89c0-20e74ee10cd1.png)
 
@@ -41,7 +45,7 @@ The plugin does a speed test when it starts, to find out the duration needed by 
 
 The plugin supports a few options. To see them, run:
 
-```sh
+```text
 # /usr/libexec/netdata/plugins.d/freeipmi.plugin -h
 
  netdata freeipmi.plugin 1.8.0-546-g72ce5d6b_rolling
@@ -67,6 +71,8 @@ The plugin supports a few options. To see them, run:
   username USER
   password PASS           connect to remote IPMI host
                           default: local IPMI processor
+
+  noauthcodecheck         don't check the authentication codes returned
 
   driver-type IPMIDRIVER
                           Specify the driver type to use instead of doing an auto selection. 
@@ -96,7 +102,6 @@ The plugin supports a few options. To see them, run:
 
  For more information:
  https://github.com/netdata/netdata/tree/master/collectors/freeipmi.plugin
-
 ```
 
 You can set these options in `/etc/netdata/netdata.conf` at this section:
@@ -107,11 +112,11 @@ You can set these options in `/etc/netdata/netdata.conf` at this section:
 	command options = 
 ```
 
-Append to `command options = ` the settings you need. The minimum `update every` is 5 (enforced internally by the plugin). IPMI is slow and CPU hungry. So, once every 5 seconds is pretty acceptable.
+Append to `command options =` the settings you need. The minimum `update every` is 5 (enforced internally by the plugin). IPMI is slow and CPU hungry. So, once every 5 seconds is pretty acceptable.
 
 ## Ignoring specific sensors
 
-Specific sensor IDs can be excluded from freeipmi tools by editing `/etc/freeipmi/freeipmi.conf` and setting the IDs to be ignored at `ipmi-sensors-exclude-record-ids`. **However this file is not used by `libipmimonitoring`** (the library used by netdata's `freeipmi.plugin`).
+Specific sensor IDs can be excluded from freeipmi tools by editing `/etc/freeipmi/freeipmi.conf` and setting the IDs to be ignored at `ipmi-sensors-exclude-record-ids`. **However this file is not used by `libipmimonitoring`** (the library used by Netdata's `freeipmi.plugin`).
 
 So, `freeipmi.plugin` supports the option `ignore` that accepts a comma separated list of sensor IDs to ignore. To configure it, edit `/etc/netdata/netdata.conf` and set:
 
@@ -142,7 +147,6 @@ ID  | Name             | Type                     | State    | Reading    | Unit
 ...
 ```
 
-
 ## Debugging
 
 You can run the plugin by hand:
@@ -159,13 +163,8 @@ You will get verbose output on what the plugin does.
 
 ## kipmi0 CPU usage
 
-There have been reports that kipmi is showing increased CPU when the IPMI is queried.
-
-[IBM has given a few explanations](http://www-01.ibm.com/support/docview.wss?uid=nas7d580df3d15874988862575fa0050f604).
-
-Check also [this stackexchange post](http://unix.stackexchange.com/questions/74900/kipmi0-eating-up-to-99-8-cpu-on-centos-6-4).
-
-To lower the CPU consumption of the system you can issue this command:
+There have been reports that kipmi is showing increased CPU when the IPMI is queried. To lower the CPU consumption of
+the system you can issue this command:
 
 ```sh
 echo 10 > /sys/module/ipmi_si/parameters/kipmid_max_busy_us
@@ -180,11 +179,11 @@ options ipmi_si kipmid_max_busy_us=10
 
 This instructs the kernel IPMI module to pause for a tick between checking IPMI. Querying IPMI will be a lot slower now (e.g. several seconds for IPMI to respond), but `kipmi` will not use any noticeable CPU. You can also use a higher number (this is the number of microseconds to poll IPMI for a response, before waiting for a tick).
 
-If you need to disable IPMI for netdata, edit `/etc/netdata/netdata.conf` and set:
+If you need to disable IPMI for Netdata, edit `/etc/netdata/netdata.conf` and set:
 
 ```
 [plugins]
     freeipmi = no
 ```
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Ffreeipmi.plugin%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Ffreeipmi.plugin%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

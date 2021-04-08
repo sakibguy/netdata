@@ -90,9 +90,14 @@
 #define NETDATA_CHART_PRIO_MEM_KSM_RATIOS             1302
 #define NETDATA_CHART_PRIO_MEM_NUMA                   1400
 #define NETDATA_CHART_PRIO_MEM_NUMA_NODES             1410
+#define NETDATA_CHART_PRIO_MEM_PAGEFRAG               1450
 #define NETDATA_CHART_PRIO_MEM_HW                     1500
 #define NETDATA_CHART_PRIO_MEM_HW_ECC_CE              1550
 #define NETDATA_CHART_PRIO_MEM_HW_ECC_UE              1560
+#define NETDATA_CHART_PRIO_MEM_ZRAM                   1600
+#define NETDATA_CHART_PRIO_MEM_ZRAM_SAVINGS           1601
+#define NETDATA_CHART_PRIO_MEM_ZRAM_RATIO             1602
+#define NETDATA_CHART_PRIO_MEM_ZRAM_EFFICIENCY        1603
 
 // Disks
 
@@ -100,10 +105,11 @@
 #define NETDATA_CHART_PRIO_DISK_OPS                   2001
 #define NETDATA_CHART_PRIO_DISK_QOPS                  2002
 #define NETDATA_CHART_PRIO_DISK_BACKLOG               2003
-#define NETDATA_CHART_PRIO_DISK_UTIL                  2004
-#define NETDATA_CHART_PRIO_DISK_AWAIT                 2005
-#define NETDATA_CHART_PRIO_DISK_AVGSZ                 2006
-#define NETDATA_CHART_PRIO_DISK_SVCTM                 2007
+#define NETDATA_CHART_PRIO_DISK_BUSY                  2004
+#define NETDATA_CHART_PRIO_DISK_UTIL                  2005
+#define NETDATA_CHART_PRIO_DISK_AWAIT                 2006
+#define NETDATA_CHART_PRIO_DISK_AVGSZ                 2007
+#define NETDATA_CHART_PRIO_DISK_SVCTM                 2008
 #define NETDATA_CHART_PRIO_DISK_MOPS                  2021
 #define NETDATA_CHART_PRIO_DISK_IOTIME                2022
 #define NETDATA_CHART_PRIO_BCACHE_CACHE_ALLOC         2120
@@ -277,6 +283,8 @@
 #define NETDATA_CHART_PRIO_TC_QOS_TOCKENS             7030
 #define NETDATA_CHART_PRIO_TC_QOS_CTOCKENS            7040
 
+// Infiniband
+#define NETDATA_CHART_PRIO_INFINIBAND                 7100
 
 // Netfilter
 
@@ -305,10 +313,16 @@
 #define NETDATA_CHART_PRIO_MDSTAT_SPEED               9006
 
 // Linux Power Supply
+
 #define NETDATA_CHART_PRIO_POWER_SUPPLY_CAPACITY      9500 // 4 charts per power supply
 #define NETDATA_CHART_PRIO_POWER_SUPPLY_CHARGE        9501
 #define NETDATA_CHART_PRIO_POWER_SUPPLY_ENERGY        9502
 #define NETDATA_CHART_PRIO_POWER_SUPPLY_VOLTAGE       9503
+
+
+// Wireless
+
+#define NETDATA_CHART_PRIO_WIRELESS_IFACE	     7110
 
 // CGROUPS
 

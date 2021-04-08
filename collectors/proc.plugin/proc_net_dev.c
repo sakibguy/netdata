@@ -5,6 +5,23 @@
 #define PLUGIN_PROC_MODULE_NETDEV_NAME "/proc/net/dev"
 #define CONFIG_SECTION_PLUGIN_PROC_NETDEV "plugin:" PLUGIN_PROC_CONFIG_NAME ":" PLUGIN_PROC_MODULE_NETDEV_NAME
 
+#define STATE_LENGTH_MAX 32
+
+// As defined in https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-net
+const char *operstate_names[] = { "unknown", "notpresent", "down", "lowerlayerdown", "testing", "dormant", "up" };
+
+static inline int get_operstate(char *operstate)
+{
+    int i;
+
+    for (i = 0; i < (int) (sizeof(operstate_names) / sizeof(char *)); i++) {
+        if (!strcmp(operstate, operstate_names[i])) {
+            return i;
+        }
+    }
+    return 0;
+}
+
 // ----------------------------------------------------------------------------
 // netdev list
 
@@ -26,6 +43,11 @@ static struct netdev {
     int do_fifo;
     int do_compressed;
     int do_events;
+    int do_speed;
+    int do_duplex;
+    int do_operstate;
+    int do_carrier;
+    int do_mtu;
 
     const char *chart_type_net_bytes;
     const char *chart_type_net_packets;
@@ -34,6 +56,11 @@ static struct netdev {
     const char *chart_type_net_events;
     const char *chart_type_net_drops;
     const char *chart_type_net_compressed;
+    const char *chart_type_net_speed;
+    const char *chart_type_net_duplex;
+    const char *chart_type_net_operstate;
+    const char *chart_type_net_carrier;
+    const char *chart_type_net_mtu;
 
     const char *chart_id_net_bytes;
     const char *chart_id_net_packets;
@@ -42,8 +69,15 @@ static struct netdev {
     const char *chart_id_net_events;
     const char *chart_id_net_drops;
     const char *chart_id_net_compressed;
+    const char *chart_id_net_speed;
+    const char *chart_id_net_duplex;
+    const char *chart_id_net_operstate;
+    const char *chart_id_net_carrier;
+    const char *chart_id_net_mtu;
 
     const char *chart_family;
+
+    struct label *chart_labels;
 
     int flipped;
     unsigned long priority;
@@ -67,6 +101,10 @@ static struct netdev {
     kernel_uint_t tcarrier;
     kernel_uint_t tcompressed;
     kernel_uint_t speed;
+    kernel_uint_t duplex;
+    kernel_uint_t operstate;
+    unsigned long long carrier;
+    unsigned long long mtu;
 
     // charts
     RRDSET *st_bandwidth;
@@ -76,6 +114,11 @@ static struct netdev {
     RRDSET *st_fifo;
     RRDSET *st_compressed;
     RRDSET *st_events;
+    RRDSET *st_speed;
+    RRDSET *st_duplex;
+    RRDSET *st_operstate;
+    RRDSET *st_carrier;
+    RRDSET *st_mtu;
 
     // dimensions
     RRDDIM *rd_rbytes;
@@ -96,9 +139,19 @@ static struct netdev {
     RRDDIM *rd_tcarrier;
     RRDDIM *rd_tcompressed;
 
-    usec_t speed_last_collected_usec;
+    RRDDIM *rd_speed;
+    RRDDIM *rd_duplex;
+    RRDDIM *rd_operstate;
+    RRDDIM *rd_carrier;
+    RRDDIM *rd_mtu;
+
     char *filename_speed;
     RRDSETVAR *chart_var_speed;
+
+    char *filename_duplex;
+    char *filename_operstate;
+    char *filename_carrier;
+    char *filename_mtu;
 
     struct netdev *next;
 } *netdev_root = NULL, *netdev_last_used = NULL;
@@ -115,6 +168,11 @@ static void netdev_charts_release(struct netdev *d) {
     if(d->st_fifo)       rrdset_is_obsolete(d->st_fifo);
     if(d->st_compressed) rrdset_is_obsolete(d->st_compressed);
     if(d->st_events)     rrdset_is_obsolete(d->st_events);
+    if(d->st_speed)      rrdset_is_obsolete(d->st_speed);
+    if(d->st_duplex)     rrdset_is_obsolete(d->st_duplex);
+    if(d->st_operstate)  rrdset_is_obsolete(d->st_operstate);
+    if(d->st_carrier)    rrdset_is_obsolete(d->st_carrier);
+    if(d->st_mtu)        rrdset_is_obsolete(d->st_mtu);
 
     d->st_bandwidth   = NULL;
     d->st_compressed  = NULL;
@@ -123,6 +181,11 @@ static void netdev_charts_release(struct netdev *d) {
     d->st_events      = NULL;
     d->st_fifo        = NULL;
     d->st_packets     = NULL;
+    d->st_speed       = NULL;
+    d->st_duplex      = NULL;
+    d->st_operstate   = NULL;
+    d->st_carrier     = NULL;
+    d->st_mtu         = NULL;
 
     d->rd_rbytes      = NULL;
     d->rd_rpackets    = NULL;
@@ -141,6 +204,14 @@ static void netdev_charts_release(struct netdev *d) {
     d->rd_tcollisions = NULL;
     d->rd_tcarrier    = NULL;
     d->rd_tcompressed = NULL;
+
+    d->rd_speed       = NULL;
+    d->rd_duplex      = NULL;
+    d->rd_operstate   = NULL;
+    d->rd_carrier     = NULL;
+    d->rd_mtu         = NULL;
+
+    d->chart_var_speed     = NULL;
 }
 
 static void netdev_free_chart_strings(struct netdev *d) {
@@ -151,6 +222,11 @@ static void netdev_free_chart_strings(struct netdev *d) {
     freez((void *)d->chart_type_net_events);
     freez((void *)d->chart_type_net_fifo);
     freez((void *)d->chart_type_net_packets);
+    freez((void *)d->chart_type_net_speed);
+    freez((void *)d->chart_type_net_duplex);
+    freez((void *)d->chart_type_net_operstate);
+    freez((void *)d->chart_type_net_carrier);
+    freez((void *)d->chart_type_net_mtu);
 
     freez((void *)d->chart_id_net_bytes);
     freez((void *)d->chart_id_net_compressed);
@@ -159,6 +235,11 @@ static void netdev_free_chart_strings(struct netdev *d) {
     freez((void *)d->chart_id_net_events);
     freez((void *)d->chart_id_net_fifo);
     freez((void *)d->chart_id_net_packets);
+    freez((void *)d->chart_id_net_speed);
+    freez((void *)d->chart_id_net_duplex);
+    freez((void *)d->chart_id_net_operstate);
+    freez((void *)d->chart_id_net_carrier);
+    freez((void *)d->chart_id_net_mtu);
 
     freez((void *)d->chart_family);
 }
@@ -166,13 +247,17 @@ static void netdev_free_chart_strings(struct netdev *d) {
 static void netdev_free(struct netdev *d) {
     netdev_charts_release(d);
     netdev_free_chart_strings(d);
+    free_label_list(d->chart_labels);
 
     freez((void *)d->name);
     freez((void *)d->filename_speed);
+    freez((void *)d->filename_duplex);
+    freez((void *)d->filename_operstate);
+    freez((void *)d->filename_carrier);
+    freez((void *)d->filename_mtu);
     freez((void *)d);
     netdev_added--;
 }
-
 
 // ----------------------------------------------------------------------------
 // netdev renames
@@ -183,6 +268,8 @@ static struct netdev_rename {
 
     const char *container_device;
     const char *container_name;
+
+    struct label *chart_labels;
 
     int processed;
 
@@ -203,7 +290,9 @@ static struct netdev_rename *netdev_rename_find(const char *host_device, uint32_
 }
 
 // other threads can call this function to register a rename to a netdev
-void netdev_rename_device_add(const char *host_device, const char *container_device, const char *container_name) {
+void netdev_rename_device_add(
+    const char *host_device, const char *container_device, const char *container_name, struct label *labels)
+{
     netdata_mutex_lock(&netdev_rename_mutex);
 
     uint32_t hash = simple_hash(host_device);
@@ -213,6 +302,7 @@ void netdev_rename_device_add(const char *host_device, const char *container_dev
         r->host_device      = strdupz(host_device);
         r->container_device = strdupz(container_device);
         r->container_name   = strdupz(container_name);
+        update_label_list(&r->chart_labels, labels);
         r->hash             = hash;
         r->next             = netdev_rename_root;
         r->processed        = 0;
@@ -227,6 +317,9 @@ void netdev_rename_device_add(const char *host_device, const char *container_dev
 
             r->container_device = strdupz(container_device);
             r->container_name   = strdupz(container_name);
+
+            update_label_list(&r->chart_labels, labels);
+            
             r->processed        = 0;
             netdev_pending_renames++;
             info("CGROUP: altered network interface rename for '%s' as '%s' under '%s'", r->host_device, r->container_device, r->container_name);
@@ -258,6 +351,7 @@ void netdev_rename_device_del(const char *host_device) {
             freez((void *) r->host_device);
             freez((void *) r->container_name);
             freez((void *) r->container_device);
+            free_label_list(r->chart_labels);
             freez((void *) r);
             break;
         }
@@ -282,6 +376,11 @@ static inline void netdev_rename_cgroup(struct netdev *d, struct netdev_rename *
     d->chart_type_net_events     = strdupz(buffer);
     d->chart_type_net_fifo       = strdupz(buffer);
     d->chart_type_net_packets    = strdupz(buffer);
+    d->chart_type_net_speed      = strdupz(buffer);
+    d->chart_type_net_duplex     = strdupz(buffer);
+    d->chart_type_net_operstate  = strdupz(buffer);
+    d->chart_type_net_carrier    = strdupz(buffer);
+    d->chart_type_net_mtu        = strdupz(buffer);
 
     snprintfz(buffer, RRD_ID_LENGTH_MAX, "net_%s", r->container_device);
     d->chart_id_net_bytes      = strdupz(buffer);
@@ -304,8 +403,25 @@ static inline void netdev_rename_cgroup(struct netdev *d, struct netdev_rename *
     snprintfz(buffer, RRD_ID_LENGTH_MAX, "net_packets_%s", r->container_device);
     d->chart_id_net_packets    = strdupz(buffer);
 
+    snprintfz(buffer, RRD_ID_LENGTH_MAX, "net_speed_%s", r->container_device);
+    d->chart_id_net_speed      = strdupz(buffer);
+
+    snprintfz(buffer, RRD_ID_LENGTH_MAX, "net_duplex_%s", r->container_device);
+    d->chart_id_net_duplex     = strdupz(buffer);
+
+    snprintfz(buffer, RRD_ID_LENGTH_MAX, "net_operstate_%s", r->container_device);
+    d->chart_id_net_operstate  = strdupz(buffer);
+
+    snprintfz(buffer, RRD_ID_LENGTH_MAX, "net_carrier_%s", r->container_device);
+    d->chart_id_net_carrier    = strdupz(buffer);
+
+    snprintfz(buffer, RRD_ID_LENGTH_MAX, "net_mtu_%s", r->container_device);
+    d->chart_id_net_mtu        = strdupz(buffer);
+
     snprintfz(buffer, RRD_ID_LENGTH_MAX, "net %s", r->container_device);
     d->chart_family = strdupz(buffer);
+
+    update_label_list(&d->chart_labels, r->chart_labels);
 
     d->priority = NETDATA_CHART_PRIO_CGROUP_NET_IFACE;
     d->flipped = 1;
@@ -406,6 +522,11 @@ static struct netdev *get_netdev(const char *name) {
     d->chart_type_net_events     = strdupz("net_events");
     d->chart_type_net_fifo       = strdupz("net_fifo");
     d->chart_type_net_packets    = strdupz("net_packets");
+    d->chart_type_net_speed      = strdupz("net_speed");
+    d->chart_type_net_duplex     = strdupz("net_duplex");
+    d->chart_type_net_operstate  = strdupz("net_operstate");
+    d->chart_type_net_carrier    = strdupz("net_carrier");
+    d->chart_type_net_mtu        = strdupz("net_mtu");
 
     d->chart_id_net_bytes      = strdupz(d->name);
     d->chart_id_net_compressed = strdupz(d->name);
@@ -414,6 +535,11 @@ static struct netdev *get_netdev(const char *name) {
     d->chart_id_net_events     = strdupz(d->name);
     d->chart_id_net_fifo       = strdupz(d->name);
     d->chart_id_net_packets    = strdupz(d->name);
+    d->chart_id_net_speed      = strdupz(d->name);
+    d->chart_id_net_duplex     = strdupz(d->name);
+    d->chart_id_net_operstate  = strdupz(d->name);
+    d->chart_id_net_carrier    = strdupz(d->name);
+    d->chart_id_net_mtu        = strdupz(d->name);
 
     d->chart_family = strdupz(d->name);
     d->priority = NETDATA_CHART_PRIO_FIRST_NET_IFACE;
@@ -439,9 +565,14 @@ int do_proc_net_dev(int update_every, usec_t dt) {
     static SIMPLE_PATTERN *disabled_list = NULL;
     static procfile *ff = NULL;
     static int enable_new_interfaces = -1;
-    static int do_bandwidth = -1, do_packets = -1, do_errors = -1, do_drops = -1, do_fifo = -1, do_compressed = -1, do_events = -1;
-    static char *path_to_sys_devices_virtual_net = NULL, *path_to_sys_class_net_speed = NULL, *proc_net_dev_filename = NULL;
-    static long long int dt_to_refresh_speed = 0;
+    static int do_bandwidth = -1, do_packets = -1, do_errors = -1, do_drops = -1, do_fifo = -1, do_compressed = -1,
+               do_events = -1, do_speed = -1, do_duplex = -1, do_operstate = -1, do_carrier = -1, do_mtu = -1;
+    static char *path_to_sys_devices_virtual_net = NULL, *path_to_sys_class_net_speed = NULL,
+                *proc_net_dev_filename = NULL;
+    static char *path_to_sys_class_net_duplex = NULL;
+    static char *path_to_sys_class_net_operstate = NULL;
+    static char *path_to_sys_class_net_carrier = NULL;
+    static char *path_to_sys_class_net_mtu = NULL;
 
     if(unlikely(enable_new_interfaces == -1)) {
         char filename[FILENAME_MAX + 1];
@@ -455,6 +586,19 @@ int do_proc_net_dev(int update_every, usec_t dt) {
         snprintfz(filename, FILENAME_MAX, "%s%s", netdata_configured_host_prefix, "/sys/class/net/%s/speed");
         path_to_sys_class_net_speed = config_get(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "path to get net device speed", filename);
 
+        snprintfz(filename, FILENAME_MAX, "%s%s", netdata_configured_host_prefix, "/sys/class/net/%s/duplex");
+        path_to_sys_class_net_duplex = config_get(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "path to get net device duplex", filename);
+
+        snprintfz(filename, FILENAME_MAX, "%s%s", netdata_configured_host_prefix, "/sys/class/net/%s/operstate");
+        path_to_sys_class_net_operstate = config_get(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "path to get net device operstate", filename);
+
+        snprintfz(filename, FILENAME_MAX, "%s%s", netdata_configured_host_prefix, "/sys/class/net/%s/carrier");
+        path_to_sys_class_net_carrier = config_get(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "path to get net device carrier", filename);
+
+        snprintfz(filename, FILENAME_MAX, "%s%s", netdata_configured_host_prefix, "/sys/class/net/%s/mtu");
+        path_to_sys_class_net_mtu = config_get(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "path to get net device mtu", filename);
+
+
         enable_new_interfaces = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "enable new interfaces detected at runtime", CONFIG_BOOLEAN_AUTO);
 
         do_bandwidth    = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "bandwidth for all interfaces", CONFIG_BOOLEAN_AUTO);
@@ -464,11 +608,13 @@ int do_proc_net_dev(int update_every, usec_t dt) {
         do_fifo         = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "fifo for all interfaces", CONFIG_BOOLEAN_AUTO);
         do_compressed   = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "compressed packets for all interfaces", CONFIG_BOOLEAN_AUTO);
         do_events       = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "frames, collisions, carrier counters for all interfaces", CONFIG_BOOLEAN_AUTO);
+        do_speed        = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "speed for all interfaces", CONFIG_BOOLEAN_AUTO);
+        do_duplex       = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "duplex for all interfaces", CONFIG_BOOLEAN_AUTO);
+        do_operstate    = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "operstate for all interfaces", CONFIG_BOOLEAN_AUTO);
+        do_carrier      = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "carrier for all interfaces", CONFIG_BOOLEAN_AUTO);
+        do_mtu          = config_get_boolean_ondemand(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "mtu for all interfaces", CONFIG_BOOLEAN_AUTO);
 
         disabled_list = simple_pattern_create(config_get(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "disable by default interfaces matching", "lo fireqos* *-ifb"), NULL, SIMPLE_PATTERN_EXACT);
-
-        dt_to_refresh_speed = config_get_number(CONFIG_SECTION_PLUGIN_PROC_NETDEV, "refresh interface speed every seconds", 10) * USEC_PER_SEC;
-        if(dt_to_refresh_speed < 0) dt_to_refresh_speed = 0;
     }
 
     if(unlikely(!ff)) {
@@ -525,7 +671,19 @@ int do_proc_net_dev(int update_every, usec_t dt) {
                 // set the filename to get the interface speed
                 snprintfz(buffer, FILENAME_MAX, path_to_sys_class_net_speed, d->name);
                 d->filename_speed = strdupz(buffer);
+
+                snprintfz(buffer, FILENAME_MAX, path_to_sys_class_net_duplex, d->name);
+                d->filename_duplex = strdupz(buffer);
             }
+
+            snprintfz(buffer, FILENAME_MAX, path_to_sys_class_net_operstate, d->name);
+            d->filename_operstate = strdupz(buffer);
+
+            snprintfz(buffer, FILENAME_MAX, path_to_sys_class_net_carrier, d->name);
+            d->filename_carrier = strdupz(buffer);
+
+            snprintfz(buffer, FILENAME_MAX, path_to_sys_class_net_mtu, d->name);
+            d->filename_mtu = strdupz(buffer);
 
             snprintfz(buffer, FILENAME_MAX, "plugin:proc:/proc/net/dev:%s", d->name);
             d->enabled = config_get_boolean_ondemand(buffer, "enabled", d->enabled);
@@ -541,6 +699,11 @@ int do_proc_net_dev(int update_every, usec_t dt) {
             d->do_fifo       = config_get_boolean_ondemand(buffer, "fifo",       do_fifo);
             d->do_compressed = config_get_boolean_ondemand(buffer, "compressed", do_compressed);
             d->do_events     = config_get_boolean_ondemand(buffer, "events",     do_events);
+            d->do_speed      = config_get_boolean_ondemand(buffer, "speed",      do_speed);
+            d->do_duplex     = config_get_boolean_ondemand(buffer, "duplex",     do_duplex);
+            d->do_operstate  = config_get_boolean_ondemand(buffer, "operstate",  do_operstate);
+            d->do_carrier    = config_get_boolean_ondemand(buffer, "carrier",    do_carrier);
+            d->do_mtu        = config_get_boolean_ondemand(buffer, "mtu",        do_mtu);
         }
 
         if(unlikely(!d->enabled))
@@ -588,6 +751,55 @@ int do_proc_net_dev(int update_every, usec_t dt) {
             d->tcarrier    = str2kernel_uint_t(procfile_lineword(ff, l, 15));
         }
 
+        if (d->do_duplex != CONFIG_BOOLEAN_NO && d->filename_duplex) {
+            char buffer[STATE_LENGTH_MAX + 1];
+
+            if (read_file(d->filename_duplex, buffer, STATE_LENGTH_MAX)) {
+                error("Cannot refresh interface %s duplex state by reading '%s'. I will stop updating it.", d->name, d->filename_duplex);
+                freez(d->filename_duplex);
+                d->filename_duplex = NULL;
+            } else {
+                // values can be unknown, half or full -- just check the first letter for speed
+                if (buffer[0] == 'f')
+                    d->duplex = 2;
+                else if (buffer[0] == 'h')
+                    d->duplex = 1;
+                else
+                    d->duplex = 0;
+            }
+        }
+
+        if(d->do_operstate != CONFIG_BOOLEAN_NO && d->filename_operstate) {
+            char buffer[STATE_LENGTH_MAX + 1], *trimmed_buffer;
+
+            if (read_file(d->filename_operstate, buffer, STATE_LENGTH_MAX)) {
+                error(
+                    "Cannot refresh %s operstate by reading '%s'. Will not update its status anymore.",
+                    d->name, d->filename_operstate);
+                freez(d->filename_operstate);
+                d->filename_operstate = NULL;
+            } else {
+                trimmed_buffer = trim(buffer);
+                d->operstate = get_operstate(trimmed_buffer);
+            }
+        }
+
+        if (d->do_carrier != CONFIG_BOOLEAN_NO && d->filename_carrier) {
+            if (read_single_number_file(d->filename_carrier, &d->carrier)) {
+                error("Cannot refresh interface %s carrier state by reading '%s'. Stop updating it.", d->name, d->filename_carrier);
+                freez(d->filename_carrier);
+                d->filename_carrier = NULL;
+            }
+        }
+
+        if (d->do_mtu != CONFIG_BOOLEAN_NO && d->filename_mtu) {
+            if (read_single_number_file(d->filename_mtu, &d->mtu)) {
+                error("Cannot refresh mtu for interface %s by reading '%s'. Stop updating it.", d->name, d->filename_carrier);
+                freez(d->filename_carrier);
+                d->filename_carrier = NULL;
+            }
+        }
+
         //info("PROC_NET_DEV: %s speed %zu, bytes %zu/%zu, packets %zu/%zu/%zu, errors %zu/%zu, drops %zu/%zu, fifo %zu/%zu, compressed %zu/%zu, rframe %zu, tcollisions %zu, tcarrier %zu"
         //        , d->name, d->speed
         //        , d->rbytes, d->tbytes
@@ -601,7 +813,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
         // --------------------------------------------------------------------
 
-        if(unlikely((d->do_bandwidth == CONFIG_BOOLEAN_AUTO && (d->rbytes || d->tbytes))))
+        if(unlikely(d->do_bandwidth == CONFIG_BOOLEAN_AUTO &&
+                    (d->rbytes || d->tbytes || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             d->do_bandwidth = CONFIG_BOOLEAN_YES;
 
         if(d->do_bandwidth == CONFIG_BOOLEAN_YES) {
@@ -622,6 +835,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
                         , RRDSET_TYPE_AREA
                 );
 
+                rrdset_update_labels(d->st_bandwidth, d->chart_labels);
+
                 d->rd_rbytes = rrddim_add(d->st_bandwidth, "received", NULL,  8, BITS_IN_A_KILOBIT, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_tbytes = rrddim_add(d->st_bandwidth, "sent",     NULL, -8, BITS_IN_A_KILOBIT, RRD_ALGORITHM_INCREMENTAL);
 
@@ -641,28 +856,51 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
             // update the interface speed
             if(d->filename_speed) {
-                d->speed_last_collected_usec += dt;
-
-                if(unlikely(d->speed_last_collected_usec >= (usec_t)dt_to_refresh_speed)) {
-
-                    if(unlikely(!d->chart_var_speed)) {
-                        d->chart_var_speed = rrdsetvar_custom_chart_variable_create(d->st_bandwidth, "nic_speed_max");
-                        if(!d->chart_var_speed) {
-                            error("Cannot create interface %s chart variable 'nic_speed_max'. Will not update its speed anymore.", d->name);
-                            freez(d->filename_speed);
-                            d->filename_speed = NULL;
-                        }
+                if(unlikely(!d->chart_var_speed)) {
+                    d->chart_var_speed = rrdsetvar_custom_chart_variable_create(d->st_bandwidth, "nic_speed_max");
+                    if(!d->chart_var_speed) {
+                        error("Cannot create interface %s chart variable 'nic_speed_max'. Will not update its speed anymore.", d->name);
+                        freez(d->filename_speed);
+                        d->filename_speed = NULL;
                     }
+                }
 
-                    if(d->filename_speed && d->chart_var_speed) {
-                        if(read_single_number_file(d->filename_speed, (unsigned long long *) &d->speed)) {
-                            error("Cannot refresh interface %s speed by reading '%s'. Will not update its speed anymore.", d->name, d->filename_speed);
-                            freez(d->filename_speed);
-                            d->filename_speed = NULL;
-                        }
-                        else {
-                            rrdsetvar_custom_chart_variable_set(d->chart_var_speed, (calculated_number) d->speed);
-                            d->speed_last_collected_usec = 0;
+                if(d->filename_speed && d->chart_var_speed) {
+                    if(read_single_number_file(d->filename_speed, (unsigned long long *) &d->speed)) {
+                        error("Cannot refresh interface %s speed by reading '%s'. Will not update its speed anymore.", d->name, d->filename_speed);
+                        freez(d->filename_speed);
+                        d->filename_speed = NULL;
+                    }
+                    else {
+                        rrdsetvar_custom_chart_variable_set(d->chart_var_speed, (calculated_number) d->speed * KILOBITS_IN_A_MEGABIT);
+
+                        if(d->do_speed != CONFIG_BOOLEAN_NO) {
+                            if(unlikely(!d->st_speed)) {
+                                d->st_speed = rrdset_create_localhost(
+                                        d->chart_type_net_speed
+                                        , d->chart_id_net_speed
+                                        , NULL
+                                        , d->chart_family
+                                        , "net.speed"
+                                        , "Interface Speed"
+                                        , "kilobits/s"
+                                        , PLUGIN_PROC_NAME
+                                        , PLUGIN_PROC_MODULE_NETDEV_NAME
+                                        , d->priority + 7
+                                        , update_every
+                                        , RRDSET_TYPE_LINE
+                                );
+
+                                rrdset_flag_set(d->st_speed, RRDSET_FLAG_DETAIL);
+
+                                rrdset_update_labels(d->st_speed, d->chart_labels);
+
+                                d->rd_speed = rrddim_add(d->st_speed, "speed",  NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
+                            }
+                            else rrdset_next(d->st_speed);
+
+                            rrddim_set_by_pointer(d->st_speed, d->rd_speed, (collected_number)d->speed * KILOBITS_IN_A_MEGABIT);
+                            rrdset_done(d->st_speed);
                         }
                     }
                 }
@@ -671,7 +909,132 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
         // --------------------------------------------------------------------
 
-        if(unlikely((d->do_packets == CONFIG_BOOLEAN_AUTO && (d->rpackets || d->tpackets || d->rmulticast))))
+        if(d->do_duplex != CONFIG_BOOLEAN_NO && d->filename_duplex) {
+            if(unlikely(!d->st_duplex)) {
+                d->st_duplex = rrdset_create_localhost(
+                        d->chart_type_net_duplex
+                        , d->chart_id_net_duplex
+                        , NULL
+                        , d->chart_family
+                        , "net.duplex"
+                        , "Interface Duplex State"
+                        , "state"
+                        , PLUGIN_PROC_NAME
+                        , PLUGIN_PROC_MODULE_NETDEV_NAME
+                        , d->priority + 8
+                        , update_every
+                        , RRDSET_TYPE_LINE
+                );
+
+                rrdset_flag_set(d->st_duplex, RRDSET_FLAG_DETAIL);
+
+                rrdset_update_labels(d->st_duplex, d->chart_labels);
+
+                d->rd_duplex = rrddim_add(d->st_duplex, "duplex",  NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
+            }
+            else rrdset_next(d->st_duplex);
+
+            rrddim_set_by_pointer(d->st_duplex, d->rd_duplex, (collected_number)d->duplex);
+            rrdset_done(d->st_duplex);
+        }
+
+        // --------------------------------------------------------------------
+
+        if(d->do_operstate != CONFIG_BOOLEAN_NO && d->filename_operstate) {
+            if(unlikely(!d->st_operstate)) {
+                d->st_operstate = rrdset_create_localhost(
+                        d->chart_type_net_operstate
+                        , d->chart_id_net_operstate
+                        , NULL
+                        , d->chart_family
+                        , "net.operstate"
+                        , "Interface Operational State"
+                        , "state"
+                        , PLUGIN_PROC_NAME
+                        , PLUGIN_PROC_MODULE_NETDEV_NAME
+                        , d->priority + 9
+                        , update_every
+                        , RRDSET_TYPE_LINE
+                );
+
+                rrdset_flag_set(d->st_operstate, RRDSET_FLAG_DETAIL);
+
+                rrdset_update_labels(d->st_operstate, d->chart_labels);
+
+                d->rd_operstate = rrddim_add(d->st_operstate, "state",  NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
+            }
+            else rrdset_next(d->st_operstate);
+
+            rrddim_set_by_pointer(d->st_operstate, d->rd_operstate, (collected_number)d->operstate);
+            rrdset_done(d->st_operstate);
+        }
+
+        // --------------------------------------------------------------------
+
+        if(d->do_carrier != CONFIG_BOOLEAN_NO && d->filename_carrier) {
+            if(unlikely(!d->st_carrier)) {
+                d->st_carrier = rrdset_create_localhost(
+                        d->chart_type_net_carrier
+                        , d->chart_id_net_carrier
+                        , NULL
+                        , d->chart_family
+                        , "net.carrier"
+                        , "Inteface Physical Link State"
+                        , "state"
+                        , PLUGIN_PROC_NAME
+                        , PLUGIN_PROC_MODULE_NETDEV_NAME
+                        , d->priority + 10
+                        , update_every
+                        , RRDSET_TYPE_LINE
+                );
+
+                rrdset_flag_set(d->st_carrier, RRDSET_FLAG_DETAIL);
+
+                rrdset_update_labels(d->st_carrier, d->chart_labels);
+
+                d->rd_carrier = rrddim_add(d->st_carrier, "carrier",  NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
+            }
+            else rrdset_next(d->st_carrier);
+
+            rrddim_set_by_pointer(d->st_carrier, d->rd_carrier, (collected_number)d->carrier);
+            rrdset_done(d->st_carrier);
+        }
+
+        // --------------------------------------------------------------------
+
+        if(d->do_mtu != CONFIG_BOOLEAN_NO && d->filename_mtu) {
+            if(unlikely(!d->st_mtu)) {
+                d->st_mtu = rrdset_create_localhost(
+                        d->chart_type_net_mtu
+                        , d->chart_id_net_mtu
+                        , NULL
+                        , d->chart_family
+                        , "net.mtu"
+                        , "Interface MTU"
+                        , "octets"
+                        , PLUGIN_PROC_NAME
+                        , PLUGIN_PROC_MODULE_NETDEV_NAME
+                        , d->priority + 11
+                        , update_every
+                        , RRDSET_TYPE_LINE
+                );
+
+                rrdset_flag_set(d->st_mtu, RRDSET_FLAG_DETAIL);
+
+                rrdset_update_labels(d->st_mtu, d->chart_labels);
+
+                d->rd_mtu = rrddim_add(d->st_mtu, "mtu",  NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
+            }
+            else rrdset_next(d->st_mtu);
+
+            rrddim_set_by_pointer(d->st_mtu, d->rd_mtu, (collected_number)d->mtu);
+            rrdset_done(d->st_mtu);
+        }
+
+        // --------------------------------------------------------------------
+
+        if(unlikely(d->do_packets == CONFIG_BOOLEAN_AUTO &&
+           (d->rpackets || d->tpackets || d->rmulticast || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             d->do_packets = CONFIG_BOOLEAN_YES;
 
         if(d->do_packets == CONFIG_BOOLEAN_YES) {
@@ -693,6 +1056,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
                 );
 
                 rrdset_flag_set(d->st_packets, RRDSET_FLAG_DETAIL);
+
+                rrdset_update_labels(d->st_packets, d->chart_labels);
 
                 d->rd_rpackets   = rrddim_add(d->st_packets, "received",  NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_tpackets   = rrddim_add(d->st_packets, "sent",      NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
@@ -716,7 +1081,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
         // --------------------------------------------------------------------
 
-        if(unlikely((d->do_errors == CONFIG_BOOLEAN_AUTO && (d->rerrors || d->terrors))))
+        if(unlikely(d->do_errors == CONFIG_BOOLEAN_AUTO &&
+                    (d->rerrors || d->terrors || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             d->do_errors = CONFIG_BOOLEAN_YES;
 
         if(d->do_errors == CONFIG_BOOLEAN_YES) {
@@ -739,6 +1105,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
                 rrdset_flag_set(d->st_errors, RRDSET_FLAG_DETAIL);
 
+                rrdset_update_labels(d->st_errors, d->chart_labels);
+
                 d->rd_rerrors = rrddim_add(d->st_errors, "inbound",  NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_terrors = rrddim_add(d->st_errors, "outbound", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
 
@@ -759,7 +1127,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
         // --------------------------------------------------------------------
 
-        if(unlikely((d->do_drops == CONFIG_BOOLEAN_AUTO && (d->rdrops || d->tdrops))))
+        if(unlikely(d->do_drops == CONFIG_BOOLEAN_AUTO &&
+                    (d->rdrops || d->tdrops || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             d->do_drops = CONFIG_BOOLEAN_YES;
 
         if(d->do_drops == CONFIG_BOOLEAN_YES) {
@@ -782,6 +1151,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
                 rrdset_flag_set(d->st_drops, RRDSET_FLAG_DETAIL);
 
+                rrdset_update_labels(d->st_drops, d->chart_labels);
+
                 d->rd_rdrops = rrddim_add(d->st_drops, "inbound",  NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_tdrops = rrddim_add(d->st_drops, "outbound", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
 
@@ -802,7 +1173,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
         // --------------------------------------------------------------------
 
-        if(unlikely((d->do_fifo == CONFIG_BOOLEAN_AUTO && (d->rfifo || d->tfifo))))
+        if(unlikely(d->do_fifo == CONFIG_BOOLEAN_AUTO &&
+                    (d->rfifo || d->tfifo || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             d->do_fifo = CONFIG_BOOLEAN_YES;
 
         if(d->do_fifo == CONFIG_BOOLEAN_YES) {
@@ -825,6 +1197,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
                 rrdset_flag_set(d->st_fifo, RRDSET_FLAG_DETAIL);
 
+                rrdset_update_labels(d->st_fifo, d->chart_labels);
+
                 d->rd_rfifo = rrddim_add(d->st_fifo, "receive",  NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_tfifo = rrddim_add(d->st_fifo, "transmit", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
 
@@ -845,7 +1219,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
         // --------------------------------------------------------------------
 
-        if(unlikely((d->do_compressed == CONFIG_BOOLEAN_AUTO && (d->rcompressed || d->tcompressed))))
+        if(unlikely(d->do_compressed == CONFIG_BOOLEAN_AUTO &&
+                    (d->rcompressed || d->tcompressed || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             d->do_compressed = CONFIG_BOOLEAN_YES;
 
         if(d->do_compressed == CONFIG_BOOLEAN_YES) {
@@ -868,6 +1243,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
                 rrdset_flag_set(d->st_compressed, RRDSET_FLAG_DETAIL);
 
+                rrdset_update_labels(d->st_compressed, d->chart_labels);
+
                 d->rd_rcompressed = rrddim_add(d->st_compressed, "received", NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_tcompressed = rrddim_add(d->st_compressed, "sent",     NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
 
@@ -888,7 +1265,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
         // --------------------------------------------------------------------
 
-        if(unlikely((d->do_events == CONFIG_BOOLEAN_AUTO && (d->rframe || d->tcollisions || d->tcarrier))))
+        if(unlikely(d->do_events == CONFIG_BOOLEAN_AUTO &&
+                    (d->rframe || d->tcollisions || d->tcarrier || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             d->do_events = CONFIG_BOOLEAN_YES;
 
         if(d->do_events == CONFIG_BOOLEAN_YES) {
@@ -911,6 +1289,8 @@ int do_proc_net_dev(int update_every, usec_t dt) {
 
                 rrdset_flag_set(d->st_events, RRDSET_FLAG_DETAIL);
 
+                rrdset_update_labels(d->st_events, d->chart_labels);
+
                 d->rd_rframe      = rrddim_add(d->st_events, "frames",     NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_tcollisions = rrddim_add(d->st_events, "collisions", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
                 d->rd_tcarrier    = rrddim_add(d->st_events, "carrier",    NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
@@ -924,7 +1304,9 @@ int do_proc_net_dev(int update_every, usec_t dt) {
         }
     }
 
-    if(do_bandwidth == CONFIG_BOOLEAN_YES || (do_bandwidth == CONFIG_BOOLEAN_AUTO && (system_rbytes || system_tbytes))) {
+    if(do_bandwidth == CONFIG_BOOLEAN_YES || (do_bandwidth == CONFIG_BOOLEAN_AUTO &&
+                                              (system_rbytes || system_tbytes ||
+                                               netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))) {
         do_bandwidth = CONFIG_BOOLEAN_YES;
         static RRDSET *st_system_net = NULL;
         static RRDDIM *rd_in = NULL, *rd_out = NULL;

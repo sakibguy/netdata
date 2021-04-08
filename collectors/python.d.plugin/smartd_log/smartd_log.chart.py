@@ -5,13 +5,11 @@
 
 import os
 import re
-
 from copy import deepcopy
 from time import time
 
-from bases.collection import read_last_line
 from bases.FrameworkServices.SimpleService import SimpleService
-
+from bases.collection import read_last_line
 
 INCREMENTAL = 'incremental'
 ABSOLUTE = 'absolute'
@@ -51,6 +49,7 @@ ATTR198 = '198'
 ATTR199 = '199'
 ATTR202 = '202'
 ATTR206 = '206'
+ATTR233 = '233'
 ATTR_READ_ERR_COR = 'read-total-err-corrected'
 ATTR_READ_ERR_UNC = 'read-total-unc-errors'
 ATTR_WRITE_ERR_COR = 'write-total-err-corrected'
@@ -58,7 +57,6 @@ ATTR_WRITE_ERR_UNC = 'write-total-unc-errors'
 ATTR_VERIFY_ERR_COR = 'verify-total-err-corrected'
 ATTR_VERIFY_ERR_UNC = 'verify-total-unc-errors'
 ATTR_TEMPERATURE = 'temperature'
-
 
 RE_ATA = re.compile(
     '(\d+);'  # attribute
@@ -114,6 +112,7 @@ ORDER = [
     'current_pending_sector_count',
     'offline_uncorrectable_sector_count',
     'percent_lifetime_used',
+    'media_wearout_indicator',
 ]
 
 CHARTS = {
@@ -265,7 +264,7 @@ CHARTS = {
                     'line'],
         'lines': [],
         'attrs': [ATTR5],
-        'algo': INCREMENTAL,
+        'algo': ABSOLUTE,
     },
     'reserved_block_count': {
         'options': [None, 'Reserved Block Count', 'percentage', 'wear', 'smartd_log.reserved_block_count', 'line'],
@@ -324,6 +323,12 @@ CHARTS = {
         'options': [None, 'Percent Lifetime Used', 'percentage', 'wear', 'smartd_log.percent_lifetime_used', 'line'],
         'lines': [],
         'attrs': [ATTR202],
+        'algo': ABSOLUTE,
+    },
+    'media_wearout_indicator': {
+        'options': [None, 'Media Wearout Indicator', 'percentage', 'wear', 'smartd_log.media_wearout_indicator', 'line'],
+        'lines': [],
+        'attrs': [ATTR233],
         'algo': ABSOLUTE,
     }
 }
@@ -440,6 +445,20 @@ class AtaNormalized(BaseAtaSmartAttribute):
         return self.normalized_value
 
 
+class Ata3(BaseAtaSmartAttribute):
+    def value(self):
+        value = int(self.raw_value)
+        # https://github.com/netdata/netdata/issues/5919
+        #
+        # 3;151;38684000679;
+        # 423 (Average 447)
+        # 38684000679 & 0xFFF -> 423
+        # (38684000679 & 0xFFF0000) >> 16 -> 447
+        if value > 1e6:
+            return value & 0xFFF
+        return value
+
+
 class Ata9(BaseAtaSmartAttribute):
     def value(self):
         value = int(self.raw_value)
@@ -454,7 +473,14 @@ class Ata190(BaseAtaSmartAttribute):
 
 
 class Ata194(BaseAtaSmartAttribute):
+    # https://github.com/netdata/netdata/issues/3041
+    # https://github.com/netdata/netdata/issues/5919
+    #
+    # The low byte is the current temperature, the third lowest is the maximum, and the fifth lowest is the minimum
     def value(self):
+        value = int(self.raw_value)
+        if value > 1e6:
+            return value & 0xFF
         return min(int(self.normalized_value), int(self.raw_value))
 
 
@@ -475,7 +501,9 @@ class SCSIRaw(BaseSCSISmartAttribute):
 def ata_attribute_factory(value):
     name = value[0]
 
-    if name == ATTR9:
+    if name == ATTR3:
+        return Ata3(*value)
+    elif name == ATTR9:
         return Ata9(*value)
     elif name == ATTR190:
         return Ata190(*value)
@@ -486,6 +514,7 @@ def ata_attribute_factory(value):
         ATTR7,
         ATTR202,
         ATTR206,
+        ATTR233,
     ]:
         return AtaNormalized(*value)
 
@@ -510,7 +539,9 @@ def handle_error(*errors):
                 return method(*args)
             except errors:
                 return None
+
         return on_call
+
     return on_method
 
 
@@ -535,6 +566,7 @@ class DiskLogFile:
 
 class BaseDisk:
     def __init__(self, name, log_file):
+        self.raw_name = name
         self.name = re.sub(r'_+', '_', name)
         self.log_file = log_file
         self.attrs = list()
@@ -543,8 +575,8 @@ class BaseDisk:
 
     def __eq__(self, other):
         if isinstance(other, BaseDisk):
-            return self.name == other.name
-        return self.name == other
+            return self.raw_name == other.raw_name
+        return self.raw_name == other
 
     def __ne__(self, other):
         return not self == other
@@ -629,12 +661,12 @@ class Service(SimpleService):
         current_time = time()
         for disk in self.disks[:]:
             if any(
-                [
-                    not disk.alive,
-                    not disk.log_file.is_active(current_time, self.age),
-                ]
+                    [
+                        not disk.alive,
+                        not disk.log_file.is_active(current_time, self.age),
+                    ]
             ):
-                self.disks.remove(disk.name)
+                self.disks.remove(disk.raw_name)
                 self.remove_disk_from_charts(disk)
 
     def scan(self):
@@ -649,7 +681,7 @@ class Service(SimpleService):
 
         return len(self.disks)
 
-    def create_disk_from_file(self, full_name,  current_time):
+    def create_disk_from_file(self, full_name, current_time):
         if not full_name.endswith(CSV):
             self.debug('skipping {0}: not a csv file'.format(full_name))
             return None
@@ -658,9 +690,11 @@ class Service(SimpleService):
         path = os.path.join(self.log_path, full_name)
 
         if name in self.disks:
+            self.debug('skipping {0}: already in disks'.format(full_name))
             return None
 
         if [p for p in self.exclude if p in name]:
+            self.debug('skipping {0}: filtered by `exclude` option'.format(full_name))
             return None
 
         if not os.access(path, os.R_OK):
@@ -724,5 +758,4 @@ class Service(SimpleService):
             if not chart_id or chart_id not in self.charts:
                 continue
 
-            # TODO: can't delete dimension
-            self.charts[chart_id].hide_dimension('{0}_{1}'.format(disk.name, attr.name))
+            self.charts[chart_id].del_dimension('{0}_{1}'.format(disk.name, attr.name))

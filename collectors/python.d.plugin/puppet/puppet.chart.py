@@ -12,13 +12,11 @@
 #
 
 import socket
-
 from json import loads
 
 from bases.FrameworkServices.UrlService import UrlService
 
 update_every = 5
-
 
 MiB = 1 << 20
 CPU_SCALE = 1000
@@ -83,7 +81,7 @@ class Service(UrlService):
         # NOTE: there are several ways to retrieve data
         # 1. Only PE versions:
         #    https://puppet.com/docs/pe/2018.1/api_status/status_api_metrics_endpoints.html
-        # 2. Inidividual Metrics API (JMX):
+        # 2. Individual Metrics API (JMX):
         #    https://puppet.com/docs/pe/2018.1/api_status/metrics_api.html
         # 3. Extended status at debug level:
         #    https://puppet.com/docs/pe/2018.1/api_status/status_api_json_endpoints.html
@@ -108,8 +106,8 @@ class Service(UrlService):
             non_heap_mem = jvm_metrics['non-heap-memory']
 
             for k in ['max', 'committed', 'used', 'init']:
-                data['jvm_heap_'+k] = heap_mem[k]
-                data['jvm_nonheap_'+k] = non_heap_mem[k]
+                data['jvm_heap_' + k] = heap_mem[k]
+                data['jvm_nonheap_' + k] = non_heap_mem[k]
 
             fd_open = jvm_metrics['file-descriptors']
             data['fd_max'] = fd_open['max']

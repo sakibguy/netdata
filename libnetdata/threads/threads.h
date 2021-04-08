@@ -22,6 +22,7 @@ typedef pthread_t netdata_thread_t;
 
 #define NETDATA_THREAD_TAG_MAX 100
 extern const char *netdata_thread_tag(void);
+extern int netdata_thread_tag_exists(void);
 
 extern size_t netdata_threads_init(void);
 extern void netdata_threads_init_after_fork(size_t stacksize);
@@ -30,6 +31,10 @@ extern int netdata_thread_create(netdata_thread_t *thread, const char *tag, NETD
 extern int netdata_thread_cancel(netdata_thread_t thread);
 extern int netdata_thread_join(netdata_thread_t thread, void **retval);
 extern int netdata_thread_detach(pthread_t thread);
+
+#define NETDATA_THREAD_NAME_MAX 15
+extern void uv_thread_set_name_np(uv_thread_t ut, const char* name);
+extern void os_thread_get_current_name_np(char threadname[NETDATA_THREAD_NAME_MAX + 1]);
 
 #define netdata_thread_self pthread_self
 #define netdata_thread_testcancel pthread_testcancel

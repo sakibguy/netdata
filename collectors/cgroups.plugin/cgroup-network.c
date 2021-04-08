@@ -86,7 +86,7 @@ unsigned int read_iface_ifindex(const char *prefix, const char *iface) {
     return (unsigned int)ifindex;
 }
 
-struct iface *read_proc_net_dev(const char *scope, const char *prefix) {
+struct iface *read_proc_net_dev(const char *scope __maybe_unused, const char *prefix) {
     if(!prefix) prefix = "";
 
     procfile *ff = NULL;
@@ -230,7 +230,6 @@ static struct ns {
 };
 
 int switch_namespace(const char *prefix, pid_t pid) {
-    if(!prefix) prefix = "";
 
 #ifdef HAVE_SETNS
 
@@ -690,8 +689,10 @@ int main(int argc, char **argv) {
     }
     else if(!strcmp(argv[1], "--cgroup")) {
         char *cgroup = argv[2];
-        if(verify_path(cgroup) == -1)
-            fatal("cgroup '%s' does not exist or is not valid.", cgroup);
+        if(verify_path(cgroup) == -1) {
+            error("cgroup '%s' does not exist or is not valid.", cgroup);
+            return 1;
+        }
 
         pid = read_pid_from_cgroup(cgroup);
         call_the_helper(pid, cgroup);

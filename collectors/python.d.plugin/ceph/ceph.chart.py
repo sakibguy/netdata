@@ -5,6 +5,7 @@
 
 try:
     import rados
+
     CEPH = True
 except ImportError:
     CEPH = False
@@ -30,6 +31,7 @@ ORDER = [
     'pool_read_operations',
     'pool_write_operations',
     'osd_usage',
+    'osd_size',
     'osd_apply_latency',
     'osd_commit_latency'
 ]
@@ -100,6 +102,10 @@ CHARTS = {
         'options': [None, 'Ceph OSDs', 'KiB', 'osd', 'ceph.osd_usage', 'line'],
         'lines': []
     },
+    'osd_size': {
+        'options': [None, 'Ceph OSDs size', 'KiB', 'osd', 'ceph.osd_size', 'line'],
+        'lines': []
+    },
     'osd_apply_latency': {
         'options': [None, 'Ceph OSDs apply latency', 'milliseconds', 'osd', 'ceph.apply_latency', 'line'],
         'lines': []
@@ -119,6 +125,7 @@ class Service(SimpleService):
         self.definitions = CHARTS
         self.config_file = self.configuration.get('config_file')
         self.keyring_file = self.configuration.get('keyring_file')
+        self.rados_id = self.configuration.get('rados_id', 'admin')
 
     def check(self):
         """
@@ -147,7 +154,8 @@ class Service(SimpleService):
             return False
         try:
             self.cluster = rados.Rados(conffile=self.config_file,
-                                       conf=dict(keyring=self.keyring_file))
+                                       conf=dict(keyring=self.keyring_file),
+                                       rados_id=self.rados_id)
             self.cluster.connect()
         except rados.Error as error:
             self.error(error)
@@ -161,7 +169,7 @@ class Service(SimpleService):
         :return: None
         """
         # Pool lines
-        for pool in sorted(self._get_df()['pools'], key=lambda x:sorted(x.keys())):
+        for pool in sorted(self._get_df()['pools'], key=lambda x: sorted(x.keys())):
             self.definitions['pool_usage']['lines'].append([pool['name'],
                                                             pool['name'],
                                                             'absolute'])
@@ -169,21 +177,24 @@ class Service(SimpleService):
                                                               pool['name'],
                                                               'absolute'])
             self.definitions['pool_read_bytes']['lines'].append(['read_{0}'.format(pool['name']),
-                                                                pool['name'],
-                                                                'absolute', 1, 1024])
-            self.definitions['pool_write_bytes']['lines'].append(['write_{0}'.format(pool['name']),
                                                                  pool['name'],
                                                                  'absolute', 1, 1024])
+            self.definitions['pool_write_bytes']['lines'].append(['write_{0}'.format(pool['name']),
+                                                                  pool['name'],
+                                                                  'absolute', 1, 1024])
             self.definitions['pool_read_operations']['lines'].append(['read_operations_{0}'.format(pool['name']),
-                                                                     pool['name'],
-                                                                     'absolute'])
-            self.definitions['pool_write_operations']['lines'].append(['write_operations_{0}'.format(pool['name']),
                                                                       pool['name'],
                                                                       'absolute'])
+            self.definitions['pool_write_operations']['lines'].append(['write_operations_{0}'.format(pool['name']),
+                                                                       pool['name'],
+                                                                       'absolute'])
 
         # OSD lines
-        for osd in sorted(self._get_osd_df()['nodes'], key=lambda x:sorted(x.keys())):
+        for osd in sorted(self._get_osd_df()['nodes'], key=lambda x: sorted(x.keys())):
             self.definitions['osd_usage']['lines'].append([osd['name'],
+                                                           osd['name'],
+                                                           'absolute'])
+            self.definitions['osd_size']['lines'].append(['size_{0}'.format(osd['name']),
                                                            osd['name'],
                                                            'absolute'])
             self.definitions['osd_apply_latency']['lines'].append(['apply_latency_{0}'.format(osd['name']),
@@ -203,8 +214,10 @@ class Service(SimpleService):
             df = self._get_df()
             osd_df = self._get_osd_df()
             osd_perf = self._get_osd_perf()
+            osd_perf_infos = get_osd_perf_infos(osd_perf)
             pool_stats = self._get_osd_pool_stats()
-            data.update(self._get_general(osd_perf, pool_stats))
+
+            data.update(self._get_general(osd_perf_infos, pool_stats))
             for pool in df['pools']:
                 data.update(self._get_pool_usage(pool))
                 data.update(self._get_pool_objects(pool))
@@ -212,14 +225,15 @@ class Service(SimpleService):
                 data.update(self._get_pool_rw(pool_io))
             for osd in osd_df['nodes']:
                 data.update(self._get_osd_usage(osd))
-            for osd_apply_commit in osd_perf['osd_perf_infos']:
+                data.update(self._get_osd_size(osd))
+            for osd_apply_commit in osd_perf_infos:
                 data.update(self._get_osd_latency(osd_apply_commit))
             return data
         except (ValueError, AttributeError) as error:
             self.error(error)
             return None
 
-    def _get_general(self, osd_perf, pool_stats):
+    def _get_general(self, osd_perf_infos, pool_stats):
         """
         Get ceph's general usage
         :return: dict
@@ -237,7 +251,7 @@ class Service(SimpleService):
             write_bytes_sec += pool_rw_io_b['client_io_rate'].get('write_bytes_sec', 0)
             read_op_per_sec += pool_rw_io_b['client_io_rate'].get('read_op_per_sec', 0)
             write_op_per_sec += pool_rw_io_b['client_io_rate'].get('write_op_per_sec', 0)
-        for perf in osd_perf['osd_perf_infos']:
+        for perf in osd_perf_infos:
             apply_latency += perf['perf_stats']['apply_latency_ms']
             commit_latency += perf['perf_stats']['commit_latency_ms']
 
@@ -291,6 +305,14 @@ class Service(SimpleService):
         return {osd['name']: float(osd['kb_used'])}
 
     @staticmethod
+    def _get_osd_size(osd):
+        """
+        Process raw data into osd dict information to get osd size (kb)
+        :return: A osd dict with osd name's key and size bytes' value
+        """
+        return {'size_{0}'.format(osd['name']): float(osd['kb'])}
+
+    @staticmethod
     def _get_osd_latency(osd):
         """
         Get ceph osd apply and commit latency
@@ -342,3 +364,11 @@ class Service(SimpleService):
             'prefix': 'osd pool stats',
             'format': 'json'
         }), '')[1].decode('utf-8'))
+
+
+def get_osd_perf_infos(osd_perf):
+    # https://github.com/netdata/netdata/issues/8247
+    # module uses 'osd_perf_infos' data, its been moved under 'osdstats` since Ceph v14.2
+    if 'osd_perf_infos' in osd_perf:
+        return osd_perf['osd_perf_infos']
+    return osd_perf['osdstats']['osd_perf_infos']
