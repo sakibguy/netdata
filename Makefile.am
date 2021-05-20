@@ -57,15 +57,12 @@ dist_noinst_DATA = \
     netdata.cppcheck \
     netdata.spec \
     package.json \
-    packaging/bundle-dashboard.sh \
     packaging/bundle-ebpf.sh \
     packaging/bundle-judy.sh \
     packaging/bundle-libbpf.sh \
     packaging/bundle-lws.sh \
     packaging/bundle-mosquitto.sh \
     packaging/check-kernel-config.sh \
-    packaging/dashboard.checksums \
-    packaging/dashboard.version \
     packaging/ebpf.checksums \
     packaging/ebpf.version \
     packaging/go.d.checksums \
@@ -117,11 +114,7 @@ SUBDIRS += \
     spawn \
     $(NULL)
 
-if ACLK_NG
-SUBDIRS += \
-    mqtt_websockets \
-    $(NULL)
-else
+if !ACLK_NG
 SUBDIRS += \
     aclk/legacy \
     $(NULL)
@@ -294,6 +287,8 @@ EBPF_PLUGIN_FILES = \
     collectors/ebpf.plugin/ebpf.c \
     collectors/ebpf.plugin/ebpf_cachestat.c \
     collectors/ebpf.plugin/ebpf_cachestat.h \
+    collectors/ebpf.plugin/ebpf_dcstat.c \
+    collectors/ebpf.plugin/ebpf_dcstat.h \
     collectors/ebpf.plugin/ebpf_process.c \
     collectors/ebpf.plugin/ebpf_process.h \
     collectors/ebpf.plugin/ebpf_socket.c \
@@ -560,6 +555,17 @@ ACLK_FILES = \
     aclk/aclk_rx_msgs.h \
     aclk/https_client.c \
     aclk/https_client.h \
+    mqtt_websockets/src/mqtt_wss_client.c \
+    mqtt_websockets/src/include/mqtt_wss_client.h \
+    mqtt_websockets/src/mqtt_wss_log.c \
+    mqtt_websockets/src/include/mqtt_wss_log.h \
+    mqtt_websockets/src/ws_client.c \
+    mqtt_websockets/src/include/ws_client.h \
+    mqtt_websockets/c-rbuf/src/ringbuffer.c \
+    mqtt_websockets/c-rbuf/include/ringbuffer.h \
+    mqtt_websockets/c-rbuf/src/ringbuffer_internal.h \
+    mqtt_websockets/MQTT-C/src/mqtt.c \
+    mqtt_websockets/MQTT-C/include/mqtt.h \
     $(NULL)
 else #ACLK_NG
 ACLK_FILES = \
@@ -668,6 +674,8 @@ DAEMON_FILES = \
     daemon/daemon.h \
     daemon/global_statistics.c \
     daemon/global_statistics.h \
+    daemon/analytics.c \
+    daemon/analytics.h \
     daemon/main.c \
     daemon/main.h \
     daemon/signals.c \
@@ -751,21 +759,17 @@ NETDATACLI_FILES = \
 sbin_PROGRAMS += netdata
 netdata_SOURCES = $(NETDATA_FILES)
 
-if ACLK_NG
+
 netdata_LDADD = \
-    mqtt_websockets/libmqttwebsockets.a \
     $(NETDATA_COMMON_LIBS) \
     $(NULL)
-else #ACLK_NG
+
+if !ACLK_NG
 if ENABLE_ACLK
-netdata_LDADD = \
+netdata_LDADD += \
     externaldeps/mosquitto/libmosquitto.a \
     $(OPTIONAL_LIBCAP_LIBS) \
     $(OPTIONAL_LWS_LIBS) \
-    $(NETDATA_COMMON_LIBS) \
-    $(NULL)
-else #ENABLE_ACLK
-netdata_LDADD = \
     $(NETDATA_COMMON_LIBS) \
     $(NULL)
 endif #ENABLE_ACLK

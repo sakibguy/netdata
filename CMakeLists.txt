@@ -488,6 +488,8 @@ set(EBPF_PROCESS_PLUGIN_FILES
         collectors/ebpf.plugin/ebpf.h
         collectors/ebpf.plugin/ebpf_cachestat.c
         collectors/ebpf.plugin/ebpf_cachestat.h
+        collectors/ebpf.plugin/ebpf_dcstat.c
+        collectors/ebpf.plugin/ebpf_dcstat.h
         collectors/ebpf.plugin/ebpf_process.c
         collectors/ebpf.plugin/ebpf_process.h
         collectors/ebpf.plugin/ebpf_socket.c
@@ -828,6 +830,8 @@ set(DAEMON_FILES
         daemon/daemon.h
         daemon/global_statistics.c
         daemon/global_statistics.h
+        daemon/analytics.c
+        daemon/analytics.h
         daemon/main.c
         daemon/main.h
         daemon/signals.c

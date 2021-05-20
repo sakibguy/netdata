@@ -163,6 +163,12 @@ netdataDashboard.menu = {
         info: 'Performance metrics of the ZFS filesystem. The following charts visualize all metrics reported by <a href="https://github.com/zfsonlinux/zfs/blob/master/cmd/arcstat/arcstat" target="_blank">arcstat.py</a> and <a href="https://github.com/zfsonlinux/zfs/blob/master/cmd/arc_summary/arc_summary3" target="_blank">arc_summary.py</a>.'
     },
 
+    'zfspool': {
+        title: 'ZFS pools',
+        icon: '<i class="fas fa-database"></i>',
+        info: 'State of ZFS pools.'
+    },
+
     'btrfs': {
         title: 'BTRFS filesystem',
         icon: '<i class="fas fa-folder-open"></i>',
@@ -559,6 +565,11 @@ netdataDashboard.menu = {
         info: 'Monitor system calls, internal functions, bytes read, bytes written and errors using <code>eBPF</code>.'
     },
 
+    'filesystem': {
+        title: 'Filesystem',
+        icon: '<i class="fas fa-hdd"></i>',
+    },
+
     'vernemq': {
         title: 'VerneMQ',
         icon: '<i class="fas fa-comments"></i>',
@@ -607,6 +618,19 @@ netdataDashboard.menu = {
         'A special <code>failed</code> state is available as well, which is very similar to <code>inactive</code> and is entered when the service failed in some way (process returned error code on exit, or crashed, an operation timed out, or after too many restarts). ' +
         'For detailes, see <a href="https://www.freedesktop.org/software/systemd/man/systemd.html" target="_blank"> systemd(1)</a>.'
     },
+    
+    'changefinder': {
+        title: 'ChangeFinder',
+        icon: '<i class="fas fa-flask"></i>',
+        info: 'Online changepoint detection using machine learning. More details <a href="https://github.com/netdata/netdata/blob/master/collectors/python.d.plugin/changefinder/README.md" target="_blank">here</a>.'
+    },
+
+    'zscores': {
+        title: 'Z-Scores',
+        icon: '<i class="fas fa-exclamation"></i>',
+        info: 'Z scores scores relating to key system metrics.'
+    },
+
 };
 
 
@@ -1066,6 +1090,14 @@ netdataDashboard.context = {
         info: 'System calls for <a href="https://man7.org/linux/man-pages/man2/sync_file_range.2.html" target="_blank">sync_file_range()</a> permits fine control when synchronizing the open file referred to by the file descriptor fd with disk. This system call is extremely dangerous and should not be used in portable programs.'
     },
 
+    'filesystem.dc_hit_ratio': {
+        info: 'Percentage of file accesses that were present in the directory cache. 100% means that every file that was accessed was present in the directory cache. If files are not present in the directory cache 1) they are not present in the file system, 2) the files were not accessed before. Read more about <a href="https://www.kernel.org/doc/htmldocs/filesystems/the_directory_cache.html" target="_blank">directory cache</a>.'
+    },
+
+    'filesystem.dc_reference': {
+        info: 'Counters of file accesses. <code>Reference</code> is when there is a file access and the file is not present in the directory cache. <code>Miss</code> is when there is file access and the file is not found in the filesystem. <code>Slow</code> is when there is a file access and the file is present in the filesystem but not in the directory cache. Read more about <a href="https://www.kernel.org/doc/htmldocs/filesystems/the_directory_cache.html" target="_blank">directory cache</a>.'
+    },
+
     // ------------------------------------------------------------------------
     // network interfaces
 
@@ -1261,6 +1293,22 @@ netdataDashboard.context = {
 
     'apps.bandwidth_udp_recv': {
         info: 'Calls for function <code>udp_recvmsg</code>.'
+    },
+
+    'apps.dc_hit_ratio': {
+        info: 'Percentage of file accesses that were present in the directory cache. 100% means that every file that was accessed was present in the directory cache. If files are not present in the directory cache 1) they are not present in the file system, 2) the files were not accessed before. Read more about <a href="https://www.kernel.org/doc/htmldocs/filesystems/the_directory_cache.html" target="_blank">directory cache</a>.'
+    },
+
+    'apps.dc_reference': {
+        info: 'Counters of file accesses. <code>Reference</code> is when there is a file access, see the <code>filesystem.dc_reference</code> chart for more context. Read more about <a href="https://www.kernel.org/doc/htmldocs/filesystems/the_directory_cache.html" target="_blank">directory cache</a>.'
+    },
+
+    'apps.dc_not_cache': {
+        info: 'Counters of file accesses. <code>Slow</code> is when there is a file access and the file is not present in the directory cache, see the <code>filesystem.dc_reference</code> chart for more context. Read more about <a href="https://www.kernel.org/doc/htmldocs/filesystems/the_directory_cache.html" target="_blank">directory cache</a>.'
+    },
+
+    'apps.dc_not_found': {
+        info: 'Counters of file accesses. <code>Miss</code> is when there is file access and the file is not found in the filesystem, see the <code>filesystem.dc_reference</code> chart for more context. Read more about <a href="https://www.kernel.org/doc/htmldocs/filesystems/the_directory_cache.html" target="_blank">directory cache</a>.'
     },
 
     // ------------------------------------------------------------------------
@@ -1475,6 +1523,13 @@ netdataDashboard.context = {
     },
     'disk.inodes': {
         info: 'inodes (or index nodes) are filesystem objects (e.g. files and directories). On many types of file system implementations, the maximum number of inodes is fixed at filesystem creation, limiting the maximum number of files the filesystem can hold. It is possible for a device to run out of inodes. When this happens, new files cannot be created on the device, even though there may be free space available.'
+    },
+
+    // ------------------------------------------------------------------------
+    // ZFS pools
+    'zfspool.state': {
+        info: 'ZFS pool state. The overall health of a pool, as reported by <code>zpool status</code>, is determined by the aggregate state of all devices within the pool. ' +
+            'For details, see <a href="https://openzfs.github.io/openzfs-docs/man/8/zpoolconcepts.8.html?#Device_Failure_and_Recovery" target="_blank"> ZFS documentation</a>.'
     },
 
     // ------------------------------------------------------------------------

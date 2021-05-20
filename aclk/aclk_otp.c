@@ -188,8 +188,253 @@ static int aclk_https_request(https_req_t *request, https_req_response_t *respon
     return rc;
 }
 
+struct auth_data {
+    char *client_id;
+    char *username;
+    char *passwd;
+};
+
+#define PARSE_ENV_JSON_CHK_TYPE(it, type, name)                                                                        \
+    if (json_object_get_type(json_object_iter_peek_value(it)) != type) {                                               \
+        error("value of key \"%s\" should be %s", name, #type);                                                        \
+        goto exit;                                                                                                     \
+    }
+
+#define JSON_KEY_CLIENTID "clientID"
+#define JSON_KEY_USER     "username"
+#define JSON_KEY_PASS     "password"
+#define JSON_KEY_TOPICS   "topics"
+
+static int parse_passwd_response(const char *json_str, struct auth_data *auth) {
+    int rc = 1;
+    json_object *json;
+    struct json_object_iterator it;
+    struct json_object_iterator itEnd;
+
+    json = json_tokener_parse(json_str);
+    if (!json) {
+        error("JSON-C failed to parse the payload of http respons of /env endpoint");
+        return 1;
+    }
+
+    it = json_object_iter_begin(json);
+    itEnd = json_object_iter_end(json);
+
+    while (!json_object_iter_equal(&it, &itEnd)) {
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_CLIENTID)) {
+            PARSE_ENV_JSON_CHK_TYPE(&it, json_type_string, JSON_KEY_CLIENTID)
+
+            auth->client_id = strdupz(json_object_get_string(json_object_iter_peek_value(&it)));
+            json_object_iter_next(&it);
+            continue;
+        }
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_USER)) {
+            PARSE_ENV_JSON_CHK_TYPE(&it, json_type_string, JSON_KEY_USER)
+
+            auth->username = strdupz(json_object_get_string(json_object_iter_peek_value(&it)));
+            json_object_iter_next(&it);
+            continue;
+        }
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_PASS)) {
+            PARSE_ENV_JSON_CHK_TYPE(&it, json_type_string, JSON_KEY_PASS)
+
+            auth->passwd = strdupz(json_object_get_string(json_object_iter_peek_value(&it)));
+            json_object_iter_next(&it);
+            continue;
+        }
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_TOPICS)) {
+            PARSE_ENV_JSON_CHK_TYPE(&it, json_type_array, JSON_KEY_TOPICS)
+
+            if (aclk_generate_topic_cache(json_object_iter_peek_value(&it))) {
+                error("Failed to generate topic cache!");
+                goto exit;
+            }
+            json_object_iter_next(&it);
+            continue;
+        }
+        error("Unknown key \"%s\" in passwd response payload. Ignoring", json_object_iter_peek_name(&it));
+        json_object_iter_next(&it);
+    }
+
+    if (!auth->client_id) {
+        error(JSON_KEY_CLIENTID " is compulsory key in /password response");
+        goto exit;
+    }
+    if (!auth->passwd) {
+        error(JSON_KEY_PASS " is compulsory in /password response");
+        goto exit;
+    }
+    if (!auth->username) {
+        error(JSON_KEY_USER " is compulsory in /password response");
+        goto exit;
+    }
+
+    rc = 0;
+exit:
+    json_object_put(json);
+    return rc;
+}
+
+#define JSON_KEY_ERTRY   "errorNonRetryable"
+#define JSON_KEY_EDELAY  "errorRetryDelaySeconds"
+#define JSON_KEY_EEC     "errorCode"
+#define JSON_KEY_EMSGKEY "errorMsgKey"
+#define JSON_KEY_EMSG    "errorMessage"
+#if JSON_C_MINOR_VERSION >= 13
+static const char *get_json_str_by_path(json_object *json, const char *path) {
+    json_object *ptr;
+    if (json_pointer_get(json, path, &ptr)) {
+        error("Missing compulsory key \"%s\" in error response", path);
+        return NULL;
+    }
+    if (json_object_get_type(ptr) != json_type_string) {
+        error("Value of Key \"%s\" in error response should be string", path);
+        return NULL;
+    }
+    return json_object_get_string(ptr);
+}
+
+static int aclk_parse_otp_error(const char *json_str) {
+    int rc = 1;
+    json_object *json, *ptr;
+    const char *ec;
+    const char *ek;
+    const char *emsg;
+    int block_retry = -1, backoff = -1;
+
+
+    json = json_tokener_parse(json_str);
+    if (!json) {
+        error("JSON-C failed to parse the payload of http response of /env endpoint");
+        return 1;
+    }
+
+    if ((ec = get_json_str_by_path(json, "/" JSON_KEY_EEC)) == NULL)
+        goto exit;
+
+    if ((ek = get_json_str_by_path(json, "/" JSON_KEY_EMSGKEY)) == NULL)
+        goto exit;
+
+    if ((emsg = get_json_str_by_path(json, "/" JSON_KEY_EMSG)) == NULL)
+        goto exit;
+
+    // optional field
+    if (!json_pointer_get(json, "/" JSON_KEY_ERTRY, &ptr)) {
+        if (json_object_get_type(ptr) != json_type_boolean) {
+            error("Error response Key " "/" JSON_KEY_ERTRY " should be of boolean type");
+            goto exit;
+        }
+        block_retry = json_object_get_boolean(ptr);
+    }
+
+    // optional field
+    if (!json_pointer_get(json, "/" JSON_KEY_EDELAY, &ptr)) {
+        if (json_object_get_type(ptr) != json_type_int) {
+            error("Error response Key " "/" JSON_KEY_EDELAY " should be of integer type");
+            goto exit;
+        }
+        backoff = json_object_get_int(ptr);
+    }
+
+    if (block_retry > 0)
+        aclk_disable_runtime = 1;
+
+    if (backoff > 0)
+        aclk_block_until = now_monotonic_sec() + backoff;
+
+    error("Cloud returned EC=\"%s\", Msg-Key:\"%s\", Msg:\"%s\", BlockRetry:%s, Backoff:%ds (-1 unset by cloud)", ec, ek, emsg, block_retry > 0 ? "true" : "false", backoff);
+    rc = 0;
+exit:
+    json_object_put(json);
+    return rc;
+}
+#else
+static int aclk_parse_otp_error(const char *json_str) {
+    int rc = 1;
+    int block_retry = -1, backoff = -1;
+
+    const char *ec = NULL;
+    const char *ek = NULL;
+    const char *emsg = NULL;
+
+    json_object *json;
+    struct json_object_iterator it;
+    struct json_object_iterator itEnd;
+
+    json = json_tokener_parse(json_str);
+    if (!json) {
+        error("JSON-C failed to parse the payload of http respons of /env endpoint");
+        return 1;
+    }
+
+    it = json_object_iter_begin(json);
+    itEnd = json_object_iter_end(json);
+
+    while (!json_object_iter_equal(&it, &itEnd)) {
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_EMSG)) {
+            PARSE_ENV_JSON_CHK_TYPE(&it, json_type_string, JSON_KEY_EMSG)
+
+            emsg = json_object_get_string(json_object_iter_peek_value(&it));
+            json_object_iter_next(&it);
+            continue;
+        }
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_EMSGKEY)) {
+            PARSE_ENV_JSON_CHK_TYPE(&it, json_type_string, JSON_KEY_EMSGKEY)
+
+            ek = json_object_get_string(json_object_iter_peek_value(&it));
+            json_object_iter_next(&it);
+            continue;
+        }
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_EEC)) {
+            PARSE_ENV_JSON_CHK_TYPE(&it, json_type_string, JSON_KEY_EEC)
+
+            ec = strdupz(json_object_get_string(json_object_iter_peek_value(&it)));
+            json_object_iter_next(&it);
+            continue;
+        }
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_EDELAY)) {
+            if (json_object_get_type(json_object_iter_peek_value(&it)) != json_type_int) {
+                error("value of key " JSON_KEY_EDELAY " should be integer");
+                goto exit;
+            }
+
+            backoff = json_object_get_int(json_object_iter_peek_value(&it));
+            json_object_iter_next(&it);
+            continue;
+        }
+        if (!strcmp(json_object_iter_peek_name(&it), JSON_KEY_ERTRY)) {
+            if (json_object_get_type(json_object_iter_peek_value(&it)) != json_type_boolean) {
+                error("value of key " JSON_KEY_ERTRY " should be integer");
+                goto exit;
+            }
+
+            block_retry = json_object_get_boolean(json_object_iter_peek_value(&it));
+            json_object_iter_next(&it);
+            continue;
+        }
+        error("Unknown key \"%s\" in error response payload. Ignoring", json_object_iter_peek_name(&it));
+        json_object_iter_next(&it);
+    }
+
+    if (block_retry > 0)
+        aclk_disable_runtime = 1;
+
+    if (backoff > 0)
+        aclk_block_until = now_monotonic_sec() + backoff;
+
+    error("Cloud returned EC=\"%s\", Msg-Key:\"%s\", Msg:\"%s\", BlockRetry:%s, Backoff:%ds (-1 unset by cloud)", ec, ek, emsg, block_retry > 0 ? "true" : "false", backoff);
+    rc = 0;
+exit:
+    json_object_put(json);
+    return rc;
+}
+#endif
+
 #define OTP_URL_PREFIX "/api/v1/auth/node/"
-void aclk_get_mqtt_otp(RSA *p_key, char **mqtt_usr, char **mqtt_pass, url_t *target) {
+int aclk_get_mqtt_otp(RSA *p_key, char **mqtt_id, char **mqtt_usr, char **mqtt_pass, url_t *target) {
+    // TODO this fnc will be rewritten and simplified in following PRs
+    // still carries lot of baggage from ACLK Legacy
+    int rc = 1;
     BUFFER *url = buffer_create(strlen(OTP_URL_PREFIX) + UUID_STR_LEN + 20);
 
     https_req_t req = HTTPS_REQ_T_INITIALIZER;
@@ -214,6 +459,8 @@ void aclk_get_mqtt_otp(RSA *p_key, char **mqtt_usr, char **mqtt_pass, url_t *tar
     }
     if (resp.http_code != 200) {
         error ("ACLK_OTP Challenge HTTP code not 200 OK (got %d)", resp.http_code);
+        if (resp.payload_size)
+            aclk_parse_otp_error(resp.payload);
         goto cleanup_resp;
     }
     info ("ACLK_OTP Got Challenge from Cloud");
@@ -265,43 +512,31 @@ void aclk_get_mqtt_otp(RSA *p_key, char **mqtt_usr, char **mqtt_pass, url_t *tar
     }
     if (resp.http_code != 201) {
         error ("ACLK_OTP Password HTTP code not 201 Created (got %d)", resp.http_code);
+        if (resp.payload_size)
+            aclk_parse_otp_error(resp.payload);
         goto cleanup_resp;
     }
     info ("ACLK_OTP Got Password from Cloud");
 
-    struct dictionary_singleton password = { .key = "password", .result = NULL };
-    if (json_parse(resp.payload, &password, json_extract_singleton) != JSON_OK)
-    {
-        freez(password.result);
-        error("Could not parse the json response with the password");
+    struct auth_data data = { .client_id = NULL, .passwd = NULL, .username = NULL };
+    
+    if (parse_passwd_response(resp.payload, &data)){
+        error("Error parsing response of password endpoint");
         goto cleanup_resp;
     }
 
-    if (password.result == NULL ) {
-        error("Could not retrieve password from auth response");
-        goto cleanup_resp;
-    }
-    if (*mqtt_pass != NULL )
-        freez(*mqtt_pass);
-    *mqtt_pass = password.result;
-    if (*mqtt_usr != NULL)
-        freez(*mqtt_usr);
-    *mqtt_usr = agent_id;
-    agent_id = NULL;
+    *mqtt_pass = data.passwd;
+    *mqtt_usr = data.username;
+    *mqtt_id = data.client_id;
 
+    rc = 0;
 cleanup_resp:
     https_req_response_free(&resp);
 cleanup:
-    if (agent_id != NULL)
-        freez(agent_id);
+    freez(agent_id);
     buffer_free(url);
+    return rc;
 }
-
-#define PARSE_ENV_JSON_CHK_TYPE(it, type, name)                                                                        \
-    if (json_object_get_type(json_object_iter_peek_value(it)) != type) {                                               \
-        error("value of key \"%s\" should be %s", name, #type);                                                        \
-        goto exit;                                                                                                     \
-    }
 
 #define JSON_KEY_ENC "encoding"
 #define JSON_KEY_AUTH_ENDPOINT "authEndpoint"

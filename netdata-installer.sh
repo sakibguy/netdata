@@ -650,12 +650,17 @@ EOF
       -D OPENSSL_ROOT_DIR=/usr/local/opt/openssl \
       -D OPENSSL_LIBRARIES=/usr/local/opt/openssl/lib \
       -D LWS_WITH_SOCKS5:bool=ON \
+      -D LWS_IPV6:bool=ON \
       $CMAKE_FLAGS \
       .
   else
-    run ${env_cmd} cmake -D LWS_WITH_SOCKS5:bool=ON $CMAKE_FLAGS .
+    run ${env_cmd} cmake \
+      -D LWS_WITH_SOCKS5:bool=ON \
+      -D LWS_IPV6:bool=ON \
+      $CMAKE_FLAGS \
+      .
   fi
-  run ${env_cmd} make
+  run ${env_cmd} make -j$(find_processors)
   popd > /dev/null || exit 1
 }
 
@@ -1354,40 +1359,6 @@ else
   run find "${NETDATA_PREFIX}/usr/libexec/netdata" -type f -exec chmod 0755 {} \;
   run find "${NETDATA_PREFIX}/usr/libexec/netdata" -type d -exec chmod 0755 {} \;
 fi
-
-# -----------------------------------------------------------------------------
-
-copy_react_dashboard() {
-  run cp -a $(find ${1} -mindepth 1 -maxdepth 1) "${NETDATA_WEB_DIR}"
-  run chown -R "${NETDATA_WEB_USER}:${NETDATA_WEB_GROUP}" "${NETDATA_WEB_DIR}"
-}
-
-install_react_dashboard() {
-  progress "Fetching and installing dashboard"
-
-  DASHBOARD_PACKAGE_VERSION="$(cat packaging/dashboard.version)"
-
-  tmp="$(mktemp -d -t netdata-dashboard-XXXXXX)"
-  DASHBOARD_PACKAGE_BASENAME="dashboard.tar.gz"
-
-  if fetch_and_verify "dashboard" \
-    "https://github.com/netdata/dashboard/releases/download/${DASHBOARD_PACKAGE_VERSION}/${DASHBOARD_PACKAGE_BASENAME}" \
-    "${DASHBOARD_PACKAGE_BASENAME}" \
-    "${tmp}" \
-    "${NETDATA_LOCAL_TARBALL_OVERRIDE_DASHBOARD}"; then
-    if run tar -xf "${tmp}/${DASHBOARD_PACKAGE_BASENAME}" -C "${tmp}" &&
-      copy_react_dashboard "${tmp}/build" &&
-      rm -rf "${tmp}"; then
-      run_ok "React dashboard installed."
-    else
-      run_failed "Failed to install React dashboard. The install process will continue, but you will not be able to use the new dashboard."
-    fi
-  else
-    run_failed "Unable to fetch React dashboard. The install process will continue, but you will not be able to use the new dashboard."
-  fi
-}
-
-install_react_dashboard
 
 # -----------------------------------------------------------------------------
 
