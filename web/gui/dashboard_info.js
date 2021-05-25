@@ -127,6 +127,11 @@ netdataDashboard.menu = {
         info: 'Charts with performance information for all the system disks. Special care has been given to present disk performance metrics in a way compatible with <code>iostat -x</code>. netdata by default prevents rendering performance charts for individual partitions and unmounted virtual disks. Disabled charts can still be enabled by configuring the relative settings in the netdata configuration file.'
     },
 
+    'mdstat': {
+        title: 'MD arrays',
+        icon: '<i class="fas fa-hdd"></i>'
+    },
+
     'sensors': {
         title: 'Sensors',
         icon: '<i class="fas fa-leaf"></i>',
@@ -3497,6 +3502,14 @@ netdataDashboard.context = {
     'ebpf.process_status': {
         title : 'Task status',
         info: 'Difference between the number of process created and the number of threads created per period(<code>process</code> dimension), it also shows the number of possible zombie process running on system.'
+    },
+
+    'apps.swap_read_call': {
+        info: 'The function <code>swap_readpage</code> is called when the kernel reads a page from swap memory.'
+    },
+
+    'apps.swap_write_call': {
+        info: 'The function <code>swap_writepage</code> is called when the kernel writes a page to swap memory.'
     },
 
     // ------------------------------------------------------------------------
