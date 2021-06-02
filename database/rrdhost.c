@@ -656,7 +656,7 @@ int rrd_init(char *hostname, struct rrdhost_system_info *system_info) {
 
     if (unlikely(sql_init_database())) {
         if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE)
-            return 1;
+            fatal("Failed to initialize SQLite");
         info("Skipping SQLITE metadata initialization since memory mode is not db engine");
     }
 
@@ -709,7 +709,7 @@ int rrd_init(char *hostname, struct rrdhost_system_info *system_info) {
         rrdhost_free(localhost);
         localhost = NULL;
         rrd_unlock();
-        return 1;
+        fatal("Failed to initialize dbengine");
     }
 #endif
     rrd_unlock();
@@ -1417,7 +1417,7 @@ restart_after_removal:
                         uint8_t can_delete_metric = rd->state->collect_ops.finalize(rd);
                         if (can_delete_metric) {
                             /* This metric has no data and no references */
-                            delete_dimension_uuid(rd->state->metric_uuid);
+                            delete_dimension_uuid(&rd->state->metric_uuid);
                             rrddim_free(st, rd);
                             if (unlikely(!last)) {
                                 rd = st->dimensions;
