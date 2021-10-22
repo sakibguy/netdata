@@ -5,6 +5,12 @@
 #include "libnetdata/libnetdata.h"
 #include "mqtt_wss_client.h"
 
+// CentOS 7 has older version that doesn't define this
+// same goes for MacOS
+#ifndef UUID_STR_LEN
+#define UUID_STR_LEN 37
+#endif
+
 // Helper stuff which should not have any further inside ACLK dependency
 // and are supposed not to be needed outside of ACLK
 
@@ -72,7 +78,8 @@ enum aclk_topics {
     ACLK_TOPICID_NODE_INFO             = 13,
     ACLK_TOPICID_ALARM_LOG             = 14,
     ACLK_TOPICID_ALARM_HEALTH          = 15,
-    ACLK_TOPICID_ALARM_CONFIG          = 16
+    ACLK_TOPICID_ALARM_CONFIG          = 16,
+    ACLK_TOPICID_ALARM_SNAPSHOT        = 17
 };
 
 const char *aclk_get_topic(enum aclk_topics topic);
