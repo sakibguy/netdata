@@ -129,7 +129,7 @@ jobs:
       - name: Prepare Environment
         run: mkdir -p artifacts
       - name: Retrieve Artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
       - name: Prepare Artifacts
         working-directory: ./artifacts/
         run: |
@@ -168,7 +168,7 @@ jobs:
       - prepare-upload
     steps:
       - name: Retrieve Artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: final-artifacts
       - name: Setup Gcloud
@@ -211,7 +211,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
       - name: Retrieve Artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: final-artifacts
       - name: Create Release
